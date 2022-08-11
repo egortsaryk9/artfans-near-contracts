@@ -16,7 +16,11 @@ pub struct Contract {
     post_messages: LookupMap<String, MessageList>
 }
 
-#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct MessageList {
+    list: Vector<Message>,
+}
+
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Message {
@@ -24,17 +28,25 @@ pub struct Message {
     text: String,
 }
 
-#[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
-pub struct MessageList {
-    list: Vector<Message>,
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ContractCall {
     AddMessage { post_id: String, text: String },
     AddFriend,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum ContractCallResult {
+    AddMessage { message_id: MessageId },
+    AddFriend,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct MessageId {
+    post_id: String,
+    idx: u64
 }
 
 #[near_bindgen]
@@ -51,8 +63,13 @@ impl Contract {
         }
     }
 
-    pub fn add_message(&mut self, post_id: String, text: String) {
-        self.collect_fee_and_call(ContractCall::AddMessage { post_id, text });
+    pub fn add_message(&mut self, post_id: String, text: String) -> Promise {
+        self.collect_fee_and_call(ContractCall::AddMessage { post_id, text })
+            .then(
+                ext_self::ext(env::current_account_id())
+                .with_static_gas(Gas(5*TGAS))
+                .on_add_message_called()
+            )
     }
 
     pub fn get_post_messages(&self, post_id: String, from_index: u64, limit: u64) -> Vec<Message> {
@@ -77,7 +94,7 @@ impl Contract {
 #[near_bindgen]
 impl Contract {
 
-    fn add_message_call(&mut self, post_id: String, text: String) {
+    fn add_message_call(&mut self, post_id: String, text: String) -> ContractCallResult {
         let message = Message {
             sender: env::signer_account_id().clone(),
             text
@@ -94,8 +111,40 @@ impl Contract {
 
         messages.list.push(&message);
         self.post_messages.insert(&post_id, &messages);
+
+        ContractCallResult::AddMessage {
+            message_id: MessageId {
+                post_id, 
+                idx: messages.list.len() - 1
+            }
+        }
     }
 
+    #[private]
+    pub fn on_add_message_called(&mut self) -> MessageId {
+        if env::promise_results_count() != 1 {
+            env::panic_str("Unexpected promise results count");
+        }
+
+        match env::promise_result(0) {
+            PromiseResult::Successful(val) => {
+                if let Ok(call_result) = near_sdk::serde_json::from_slice::<ContractCallResult>(&val) {
+                    match call_result {
+                        ContractCallResult::AddMessage { message_id } => { 
+                            return message_id
+                        },
+                        // TODO: add state rollback
+                        _ => env::panic_str("Unknown contract call result")
+                    }
+                } else {
+                     env::panic_str("Unknown value recieved in promise")
+                }
+            },
+            _ => env::panic_str("Contract call failed")
+        };
+    }
+
+    #[private]
     fn collect_fee_and_call(&mut self, call: ContractCall) -> Promise {
         ext_ft::ext(self.fee_ft.clone())
             .with_static_gas(Gas(5*TGAS))
@@ -108,7 +157,7 @@ impl Contract {
     }
 
     #[private]
-    pub fn on_fee_collected(&mut self, call: ContractCall) -> String {
+    pub fn on_fee_collected(&mut self, call: ContractCall) -> ContractCallResult {
         if env::promise_results_count() != 1 {
             env::panic_str("Unexpected promise results count");
         }
@@ -117,14 +166,11 @@ impl Contract {
             PromiseResult::Successful(_) => {
                 match call {
                     ContractCall::AddMessage { post_id, text } => {
-                        self.add_message_call(post_id, text);
+                        return self.add_message_call(post_id, text)
                     },
-                    _ => {
-                        env::panic_str("Unknown contract call");
-                        // TODO: add refund
-                    }
+                    // TODO: add tokens refund
+                    _ => env::panic_str("Unknown contract call")
                 }
-                return "Success".to_string();
             },
             _ => env::panic_str("Fee was not charged"),
         };
