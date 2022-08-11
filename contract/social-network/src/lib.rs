@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, log, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
 use near_sdk::json_types::{U128};
-use near_sdk::collections::{UnorderedMap, Vector};
+use near_sdk::collections::{LookupMap, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
 
 pub mod external;
@@ -13,12 +13,13 @@ pub use crate::external::*;
 pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
-    post_messages: UnorderedMap<String, MessageList>
+    post_messages: LookupMap<String, MessageList>
 }
 
 #[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
-struct Message {
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct Message {
     sender: AccountId,
     text: String,
 }
@@ -43,29 +44,31 @@ impl Contract {
         if env::state_exists() == true {
             env::panic_str("Already initialized");
         }
-
         Self {
             owner,
             fee_ft,
-            post_messages: UnorderedMap::new(b"p".to_vec())
+            post_messages: LookupMap::new(b"p".to_vec())
         }
     }
 
     pub fn add_message(&mut self, post_id: String, text: String) {
-        self.log_gas("BEFORE".to_string());
         self.collect_fee_and_call(ContractCall::AddMessage { post_id, text });
     }
 
-    pub fn get_post_messages_count(&self, from_index: u64, limit: u64) -> Vec<(String, u64)> {
-        let keys = self.post_messages.keys_as_vector();
-        let values = self.post_messages.values_as_vector();
-        (from_index..std::cmp::min(from_index + limit, self.post_messages.len()))
-            .map(|index| {
-              let key: String = keys.get(index).unwrap();
-              let value = values.get(index).unwrap();
-              (key, value.list.len())
-            })
-            .collect()
+    pub fn get_post_messages(&self, post_id: String, from_index: u64, limit: u64) -> Vec<Message> {
+        if let Some(messages) = self.post_messages.get(&post_id) {
+            (from_index..std::cmp::min(from_index + limit, messages.list.len()))
+                .map(|index| {
+                    let message = messages.list.get(index).unwrap();
+                    Message {
+                        sender: message.sender,
+                        text: message.text
+                    }
+                })
+                .collect()
+        } else {
+          Vec::new()
+        }
     }
 }
 
@@ -73,12 +76,6 @@ impl Contract {
 // Private functions
 #[near_bindgen]
 impl Contract {
-
-    fn log_gas(&self, label: String) {
-        let prepaid_gas: u64 = env::prepaid_gas().into();
-        let used_gas: u64 = env::used_gas().into();
-        log!("[{}] prepaid_gas: {}; gas_used: {};", label, prepaid_gas, used_gas);
-    }
 
     fn add_message_call(&mut self, post_id: String, text: String) {
         let message = Message {
@@ -121,9 +118,11 @@ impl Contract {
                 match call {
                     ContractCall::AddMessage { post_id, text } => {
                         self.add_message_call(post_id, text);
-                        self.log_gas("AFTER".to_string());
                     },
-                    _ => {}
+                    _ => {
+                        env::panic_str("Unknown contract call");
+                        // TODO: add refund
+                    }
                 }
                 return "Success".to_string();
             },
