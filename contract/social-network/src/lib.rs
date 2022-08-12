@@ -7,13 +7,14 @@ use near_sdk::serde::{Deserialize, Serialize};
 pub mod external;
 pub use crate::external::*;
 
+type PostId = String;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
-    post_messages: LookupMap<String, MessageList>,
+    post_messages: LookupMap<PostId, MessageList>,
     account_likes: LookupMap<AccountId, PostsLikesStatsSet>
 }
 
@@ -30,7 +31,7 @@ pub struct Message {
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct PostLikesStat {
-    post_id: String,
+    post_id: PostId,
     is_post_liked: bool,
     liked_messages_idx: LookupSet<u64>
 }
@@ -51,28 +52,28 @@ pub struct PostsLikesStatsSet {
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ContractCall {
-    AddMessage { post_id: String, text: String },
-    ToggleLike { post_id: String, message_idx: Option<U64> }
+    AddMessage { post_id: PostId, text: String },
+    ToggleLike { post_id: PostId, message_idx: Option<U64> }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ContractCallResult {
-    AddMessageResult { message_id: MessageID },
+    AddMessageResult { message_id: MessageId },
     ToggleLikeResult { like_id: LikeID, is_enabled: bool }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct MessageID {
-    post_id: String,
+pub struct MessageId {
+    post_id: PostId,
     message_idx: U64
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MessageDTO {
-    message_id: MessageID,
+    message_id: MessageId,
     account: AccountId,
     text: String
 }
@@ -81,7 +82,7 @@ pub struct MessageDTO {
 #[serde(crate = "near_sdk::serde")]
 pub struct LikeID {
     account: AccountId,
-    post_id: String,
+    post_id: PostId,
     message_idx: Option<U64>
 }
 
@@ -100,26 +101,24 @@ impl Contract {
         }
     }
 
-    pub fn add_message(&mut self, post_id: String, text: String) -> Promise {
+    pub fn add_message(&mut self, post_id: PostId, text: String) -> Promise {
         self.validate_add_message_call(&post_id, &text);
         self.collect_fee_and_execute(ContractCall::AddMessage { post_id, text })
     }
 
-    pub fn toggle_like(&mut self, post_id: String, message_idx: Option<U64>) -> Promise {
+    pub fn toggle_like(&mut self, post_id: PostId, message_idx: Option<U64>) -> Promise {
         self.validate_toggle_like_call(&post_id, &message_idx);
         self.collect_fee_and_execute(ContractCall::ToggleLike { post_id, message_idx })
     }
 
 
-
-
-    pub fn get_post_messages(&self, post_id: String, from_index: u64, limit: u64) -> Vec<MessageDTO> {
+    pub fn get_post_messages(&self, post_id: PostId, from_index: u64, limit: u64) -> Vec<MessageDTO> {
         if let Some(messages) = self.post_messages.get(&post_id) {
             (from_index..std::cmp::min(from_index + limit, messages.list.len()))
                 .map(|index| {
                     let message = messages.list.get(index).unwrap();
                     MessageDTO {
-                        message_id: MessageID {
+                        message_id: MessageId {
                             post_id: post_id.clone(),
                             message_idx: U64(index)
                         },
@@ -139,7 +138,7 @@ impl Contract {
 #[near_bindgen]
 impl Contract {
 
-    fn validate_add_message_call(&self, post_id: &String, text: &String) {
+    fn validate_add_message_call(&self, post_id: &PostId, text: &String) {
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
         }
@@ -148,7 +147,7 @@ impl Contract {
         }
     }
 
-    fn execute_add_message_call(&mut self, post_id: String, text: String) -> MessageID {
+    fn execute_add_message_call(&mut self, post_id: PostId, text: String) -> MessageId {
         let mut messages = self.post_messages.get(&post_id).unwrap_or_else(|| {
             let mut prefix = Vec::with_capacity(33);
             prefix.push(b'm');
@@ -166,14 +165,14 @@ impl Contract {
         messages.list.push(&message);
         self.post_messages.insert(&post_id, &messages);
 
-        MessageID {
+        MessageId {
             post_id, 
             message_idx: U64(messages.list.len() - 1)
         }
     }
 
 
-    fn validate_toggle_like_call(&self, post_id: &String, message_idx: &Option<U64>) {
+    fn validate_toggle_like_call(&self, post_id: &PostId, message_idx: &Option<U64>) {
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
         }
@@ -191,7 +190,7 @@ impl Contract {
     }
 
 
-    fn execute_toggle_like_call(&mut self, post_id: String, message_idx: Option<U64>) -> LikeID {
+    fn execute_toggle_like_call(&mut self, post_id: PostId, message_idx: Option<U64>) -> LikeID {
         let account = env::signer_account_id();
 
         let likes_stats = self.account_likes.get(&account).unwrap_or_else(|| {
