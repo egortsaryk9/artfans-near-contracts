@@ -38,8 +38,8 @@ pub enum ContractCall {
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ContractCallResult {
-    AddMessage { message_id: MessageId },
-    AddFriend,
+    AddMessageResult { message_id: MessageId },
+    AddFriendResult,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -65,11 +65,6 @@ impl Contract {
 
     pub fn add_message(&mut self, post_id: String, text: String) -> Promise {
         self.collect_fee_and_call(ContractCall::AddMessage { post_id, text })
-            .then(
-                ext_self::ext(env::current_account_id())
-                .with_static_gas(Gas(5*TGAS))
-                .on_add_message_called()
-            )
     }
 
     pub fn get_post_messages(&self, post_id: String, from_index: u64, limit: u64) -> Vec<Message> {
@@ -94,7 +89,7 @@ impl Contract {
 #[near_bindgen]
 impl Contract {
 
-    fn add_message_call(&mut self, post_id: String, text: String) -> ContractCallResult {
+    fn add_message_call(&mut self, post_id: String, text: String) -> MessageId {
         let message = Message {
             sender: env::signer_account_id().clone(),
             text
@@ -112,36 +107,10 @@ impl Contract {
         messages.list.push(&message);
         self.post_messages.insert(&post_id, &messages);
 
-        ContractCallResult::AddMessage {
-            message_id: MessageId {
-                post_id, 
-                idx: messages.list.len() - 1
-            }
+        MessageId {
+            post_id, 
+            idx: messages.list.len() - 1
         }
-    }
-
-    #[private]
-    pub fn on_add_message_called(&mut self) -> MessageId {
-        if env::promise_results_count() != 1 {
-            env::panic_str("Unexpected promise results count");
-        }
-
-        match env::promise_result(0) {
-            PromiseResult::Successful(val) => {
-                if let Ok(call_result) = near_sdk::serde_json::from_slice::<ContractCallResult>(&val) {
-                    match call_result {
-                        ContractCallResult::AddMessage { message_id } => { 
-                            return message_id
-                        },
-                        // TODO: add state rollback
-                        _ => env::panic_str("Unknown contract call result")
-                    }
-                } else {
-                     env::panic_str("Unknown value recieved in promise")
-                }
-            },
-            _ => env::panic_str("Contract call failed")
-        };
     }
 
     #[private]
@@ -166,7 +135,8 @@ impl Contract {
             PromiseResult::Successful(_) => {
                 match call {
                     ContractCall::AddMessage { post_id, text } => {
-                        return self.add_message_call(post_id, text)
+                        let message_id = self.add_message_call(post_id, text);
+                        return ContractCallResult::AddMessageResult { message_id }
                     },
                     // TODO: add tokens refund
                     _ => env::panic_str("Unknown contract call")
