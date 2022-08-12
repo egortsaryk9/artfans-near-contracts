@@ -14,39 +14,32 @@ type PostId = String;
 pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
-    post_messages: LookupMap<PostId, MessageList>,
-    account_likes: LookupMap<AccountId, PostsLikesStatsSet>
+    posts: LookupMap<PostId, Post>,
+    likes: LookupMap<AccountId, AccountLikesStat>
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct MessageList {
-    list: Vector<Message>
+pub struct Post {
+    messages: Vector<Message>,
+    likes_count: u64,
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Message {
     account: AccountId,
-    text: String
+    text: String,
+    likes_count: u64
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct PostLikesStat {
-    post_id: PostId,
+pub struct AccountLikedPostState {
     is_post_liked: bool,
     liked_messages_idx: LookupSet<u64>
 }
 
-impl PartialEq for PostLikesStat {
-    fn eq(&self, other: &Self) -> bool {
-        self.post_id == other.post_id
-    }
-}
-
-impl Eq for PostLikesStat {}
-
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct PostsLikesStatsSet {
-    set: LookupSet<PostLikesStat>
+pub struct AccountLikesStat {
+    posts: LookupMap<PostId, AccountLikedPostState>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -60,7 +53,7 @@ pub enum ContractCall {
 #[serde(crate = "near_sdk::serde")]
 pub enum ContractCallResult {
     AddMessageResult { message_id: MessageId },
-    ToggleLikeResult { like_id: LikeID, is_enabled: bool }
+    ToggleLikeResult { is_liked: bool }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -78,13 +71,6 @@ pub struct MessageDTO {
     text: String
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub struct LikeID {
-    account: AccountId,
-    post_id: PostId,
-    message_idx: Option<U64>
-}
 
 #[near_bindgen]
 impl Contract {
@@ -96,8 +82,8 @@ impl Contract {
         Self {
             owner,
             fee_ft,
-            post_messages: LookupMap::new(b'm'),
-            account_likes: LookupMap::new(b'l'),
+            posts: LookupMap::new(b'm'),
+            likes: LookupMap::new(b'l'),
         }
     }
 
@@ -111,16 +97,17 @@ impl Contract {
         self.collect_fee_and_execute(ContractCall::ToggleLike { post_id, message_idx })
     }
 
-
-    pub fn get_post_messages(&self, post_id: PostId, from_index: u64, limit: u64) -> Vec<MessageDTO> {
-        if let Some(messages) = self.post_messages.get(&post_id) {
-            (from_index..std::cmp::min(from_index + limit, messages.list.len()))
-                .map(|index| {
-                    let message = messages.list.get(index).unwrap();
+    pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<MessageDTO> {
+        if let Some(post) = self.posts.get(&post_id) {
+            let from = u64::from(from_index);
+            let lim = u64::from(limit);
+            (from..std::cmp::min(from + lim, post.messages.len()))
+                .map(|idx| {
+                    let message = post.messages.get(idx).unwrap();
                     MessageDTO {
                         message_id: MessageId {
                             post_id: post_id.clone(),
-                            message_idx: U64(index)
+                            message_idx: U64(idx)
                         },
                         account: message.account,
                         text: message.text
@@ -148,26 +135,30 @@ impl Contract {
     }
 
     fn execute_add_message_call(&mut self, post_id: PostId, text: String) -> MessageId {
-        let mut messages = self.post_messages.get(&post_id).unwrap_or_else(|| {
-            let mut prefix = Vec::with_capacity(33);
-            prefix.push(b'm');
-            prefix.extend(env::sha256(post_id.as_bytes()));
-            MessageList {
-                list: Vector::new(prefix)
+        let account = env::signer_account_id();
+
+        let mut post = self.posts.get(&post_id).unwrap_or_else(|| {
+            let mut pref = Vec::with_capacity(33);
+            pref.push(b'm');
+            pref.extend(env::sha256(post_id.as_bytes()));
+            Post {
+                messages: Vector::new(pref),
+                likes_count: 0
             }
         });
 
         let message = Message {
-            account: env::signer_account_id(),
-            text
+            account,
+            text,
+            likes_count: 0
         };
 
-        messages.list.push(&message);
-        self.post_messages.insert(&post_id, &messages);
+        post.messages.push(&message);
+        self.posts.insert(&post_id, &post);
 
         MessageId {
             post_id, 
-            message_idx: U64(messages.list.len() - 1)
+            message_idx: U64(post.messages.len() - 1)
         }
     }
 
@@ -178,9 +169,9 @@ impl Contract {
         }
         if let Some(idx) = message_idx {
             // Message like
-            if let Some(messages) = self.post_messages.get(&post_id) {
-                let max_idx = U64::from(messages.list.len() - 1);
-                if idx >= &max_idx {
+            if let Some(post) = self.posts.get(&post_id) {
+                let max_idx = U64(post.messages.len() - 1);
+                if idx > &max_idx {
                     env::panic_str("'message_idx' is out of bounds");
                 }
             }
@@ -190,39 +181,87 @@ impl Contract {
     }
 
 
-    fn execute_toggle_like_call(&mut self, post_id: PostId, message_idx: Option<U64>) -> LikeID {
+    fn execute_toggle_like_call(&mut self, post_id: PostId, message_idx: Option<U64>) -> bool {
         let account = env::signer_account_id();
 
-        let likes_stats = self.account_likes.get(&account).unwrap_or_else(|| {
-            // First initialization for post likes
-            let mut stats_prefix = Vec::with_capacity(33);
-            stats_prefix.push(b'l');
-            stats_prefix.extend(env::sha256(account.as_bytes()));
+        let mut account_likes = self.likes.get(&account).unwrap_or_else(|| {
+            // Initialize account likes statistic for this post
+            let mut stats_pref = Vec::with_capacity(33);
+            stats_pref.push(b'l');
+            stats_pref.extend(env::sha256(account.as_bytes()));
 
-            let mut likes_stats = PostsLikesStatsSet {
-                set: LookupSet::new(stats_prefix)
+            let mut account_likes = AccountLikesStat {
+                posts: LookupMap::new(stats_pref)
             };
 
-            let mut liked_messages_prefix = Vec::with_capacity(65);
-            liked_messages_prefix.push(b'l');
-            liked_messages_prefix.extend(env::sha256(account.as_bytes()));
-            liked_messages_prefix.extend(env::sha256(post_id.as_bytes()));
+            let mut liked_messages_pref = Vec::with_capacity(65);
+            liked_messages_pref.push(b'l');
+            liked_messages_pref.extend(env::sha256(account.as_bytes()));
+            liked_messages_pref.extend(env::sha256(post_id.as_bytes()));
 
-            let likes_stat = PostLikesStat {
-                post_id: post_id.clone(),
+            let liked_post = AccountLikedPostState {
                 is_post_liked: false,
-                liked_messages_idx: LookupSet::new(liked_messages_prefix)
+                liked_messages_idx: LookupSet::new(liked_messages_pref)
             };
 
-            likes_stats.set.insert(&likes_stat);
-            likes_stats
+            account_likes.posts.insert(&post_id, &liked_post);
+            account_likes
         });
 
-        LikeID {
-            account: env::signer_account_id(),
-            post_id,
-            message_idx
+
+        let mut liked_post = account_likes.posts.get(&post_id).unwrap();
+
+        let is_liked : bool;
+        if let Some(idx) = message_idx {
+            // Message like
+            let msg_idx = u64::from(idx);
+            is_liked = !liked_post.liked_messages_idx.contains(&msg_idx);
+            if is_liked {
+                liked_post.liked_messages_idx.remove(&msg_idx);
+            } else {
+                liked_post.liked_messages_idx.insert(&msg_idx);
+            }
+
+            let mut post = self.posts.get(&post_id).unwrap();
+            let mut message = post.messages.get(msg_idx).unwrap();
+
+            if is_liked {
+                message.likes_count += 1;
+            } else {
+                message.likes_count -= 1;
+            }
+
+            post.messages.replace(msg_idx, &message);
+            self.posts.insert(&post_id, &post);
+
+        } else {
+            // Post like
+            is_liked = !liked_post.is_post_liked;
+            liked_post.is_post_liked = is_liked;
+            
+            let mut post = self.posts.get(&post_id).unwrap_or_else(|| {
+                let mut pref = Vec::with_capacity(33);
+                pref.push(b'm');
+                pref.extend(env::sha256(post_id.as_bytes()));
+                Post {
+                    messages: Vector::new(pref),
+                    likes_count: 0
+                }
+            });
+
+            if is_liked {
+                post.likes_count += 1;
+            } else {
+                post.likes_count -= 1;
+            }
+
+            self.posts.insert(&post_id, &post);
         }
+
+        account_likes.posts.insert(&post_id, &liked_post);
+        self.likes.insert(&account, &account_likes);
+
+        is_liked
     }
 
 
@@ -252,8 +291,8 @@ impl Contract {
                         return ContractCallResult::AddMessageResult { message_id }
                     },
                     ContractCall::ToggleLike { post_id, message_idx } => {
-                        let like_id = self.execute_toggle_like_call(post_id, message_idx);
-                        return ContractCallResult::ToggleLikeResult { like_id, is_enabled: true }
+                        let is_liked = self.execute_toggle_like_call(post_id, message_idx);
+                        return ContractCallResult::ToggleLikeResult { is_liked }
                     },
                 }
             },
