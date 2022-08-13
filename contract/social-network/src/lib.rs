@@ -21,7 +21,7 @@ pub struct Contract {
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Post {
     messages: Vector<Message>,
-    likes_count: u64,
+    likes_count: u64
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -172,38 +172,52 @@ impl Contract {
         }
     }
 
+    fn put_account_likes_stat(&mut self, account_id: &AccountId) -> AccountLikesStat {
+        let mut pref = Vec::with_capacity(33);
+        pref.push(b'l');
+        pref.extend(env::sha256(account_id.as_bytes()));
+
+        let acc_likes_stat = AccountLikesStat {
+            posts: LookupMap::new(pref)
+        };
+        self.likes.insert(account_id, &acc_likes_stat);
+        acc_likes_stat
+    }
+
+    fn put_account_likes_post_stat(&mut self, account_id: &AccountId, post_id: &PostId) -> AccountLikesPostStat {
+        let mut acc_likes_stat = self.likes.get(account_id).unwrap_or_else(|| {self.put_account_likes_stat(account_id)});
+
+        let mut pref = Vec::with_capacity(65);
+        pref.push(b'l');
+        pref.extend(env::sha256(account_id.as_bytes()));
+        pref.extend(env::sha256(post_id.as_bytes()));
+
+        let acc_likes_post_stat = AccountLikesPostStat {
+            is_post_liked: false,
+            liked_messages: LookupSet::new(pref)
+        };
+
+        acc_likes_stat.posts.insert(post_id, &acc_likes_post_stat);
+        self.likes.insert(account_id, &acc_likes_stat);
+
+        acc_likes_post_stat
+    }
+
     fn execute_toggle_post_like_call(&mut self, post_id: &PostId) -> bool {
-        let account = env::signer_account_id();
+        let account_id = env::signer_account_id();
 
-        let mut likes_stat = self.likes.get(&account).unwrap_or_else(|| {
-            // Initialize account likes statistic for this post
-            let mut pref_1 = Vec::with_capacity(33);
-            pref_1.push(b'l');
-            pref_1.extend(env::sha256(account.as_bytes()));
-
-            let mut likes_stat = AccountLikesStat {
-                posts: LookupMap::new(pref_1)
-            };
-
-            let mut pref_2 = Vec::with_capacity(65);
-            pref_2.push(b'l');
-            pref_2.extend(env::sha256(account.as_bytes()));
-            pref_2.extend(env::sha256(post_id.as_bytes()));
-
-            let post_stat = AccountLikesPostStat {
-                is_post_liked: false,
-                liked_messages: LookupSet::new(pref_2)
-            };
-
-            likes_stat.posts.insert(post_id, &post_stat);
-            likes_stat
+        let mut acc_likes_stat = self.likes.get(&account_id).unwrap_or_else(|| {
+            self.put_account_likes_stat(&account_id)
         });
 
-        let mut post_stat = likes_stat.posts.get(post_id).unwrap();
-        let is_liked = !post_stat.is_post_liked;
-        post_stat.is_post_liked = is_liked;
-        likes_stat.posts.insert(post_id, &post_stat);
-        self.likes.insert(&account, &likes_stat);
+        let mut acc_likes_post_stat = acc_likes_stat.posts.get(post_id).unwrap_or_else(|| {
+            self.put_account_likes_post_stat(&account_id, post_id)
+        });
+
+        let is_liked = !acc_likes_post_stat.is_post_liked;
+        acc_likes_post_stat.is_post_liked = is_liked;
+        acc_likes_stat.posts.insert(post_id, &acc_likes_post_stat);
+        self.likes.insert(&account_id, &acc_likes_stat);
 
         // TODO: Revise
         let mut post = self.posts.get(post_id).unwrap();
