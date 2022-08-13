@@ -156,8 +156,11 @@ impl Contract {
 #[near_bindgen]
 impl Contract {
 
+
+    // Assert incoming action
+
     fn assert_add_message_call(&self, post_id: &PostId, text: &String) {
-        // TODO: add check for MAX_LENGTH
+        // TODO: add check for string MAX_LENGTH
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
         }
@@ -166,38 +169,29 @@ impl Contract {
         }
     }
 
-    fn execute_add_message_call(&mut self, post_id: &PostId, text: String) -> InputMessageId {
-        let account = env::signer_account_id();
-        let mut post = self.posts.get(post_id).unwrap_or_else(|| {
-            self.add_post_storage(post_id)
-        });
-
-        let partial_id = MessagePartialId {
-            id: post.messages.len() + 1,
-            parent_id: 0
-        };
-        
-        let message = Message {
-            partial_id: partial_id,
-            account,
-            payload: MessagePayload::Text { text },
-            // likes_count: 0
-        };
-
-        post.messages.push(&message);
-        self.posts.insert(post_id, &post);
-
-        InputMessageId {
-            post_id: post_id.clone(), 
-            msg_idx: U64(post.messages.len() - 1)
-        }
-    }
-
     fn assert_toggle_post_like_call(&self, post_id: &PostId) {
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
         }
     }
+
+    fn assert_toggle_message_like_call(&self, message_id: &InputMessageId) {
+        let post_id = &message_id.post_id;
+        if post_id.trim().is_empty() {
+            env::panic_str("'post_id' is empty or whitespace");
+        }
+
+        let msg_idx = u64::from(message_id.msg_idx.clone());
+        if let Some(post) = self.posts.get(post_id) {
+            let max_idx = post.messages.len() - 1;
+            if msg_idx > max_idx {
+                env::panic_str("'msg_idx' is out of bounds");
+            }
+        }
+    }
+
+
+    // Add storage collections
 
     fn add_post_storage(&mut self, post_id: &PostId) -> Post {
         let post = Post {
@@ -248,16 +242,35 @@ impl Contract {
         liked_post_stat
     }
 
-    // TODO: Revise this
-    // fn update_post_likes_count(&mut self, post_id: &PostId, is_liked: bool) {
-    //     let mut post = self.posts.get(post_id).unwrap();
-    //     if is_liked {
-    //         post.likes_count += 1;
-    //     } else {
-    //         post.likes_count -= 1;
-    //     }
-    //     self.posts.insert(post_id, &post);
-    // }
+    
+    // Execute call logic
+
+    fn execute_add_message_call(&mut self, post_id: &PostId, text: String) -> InputMessageId {
+        let account = env::signer_account_id();
+        let mut post = self.posts.get(post_id).unwrap_or_else(|| {
+            self.add_post_storage(post_id)
+        });
+
+        let partial_id = MessagePartialId {
+            id: post.messages.len() + 1,
+            parent_id: 0
+        };
+        
+        let message = Message {
+            partial_id: partial_id,
+            account,
+            payload: MessagePayload::Text { text },
+            // likes_count: 0
+        };
+
+        post.messages.push(&message);
+        self.posts.insert(post_id, &post);
+
+        InputMessageId {
+            post_id: post_id.clone(), 
+            msg_idx: U64(post.messages.len() - 1)
+        }
+    }
 
     fn execute_toggle_post_like_call(&mut self, post_id: &PostId) -> bool {
         let account_id = env::signer_account_id();
@@ -280,38 +293,6 @@ impl Contract {
 
         is_liked
     }
-
-    fn assert_toggle_message_like_call(&self, message_id: &InputMessageId) {
-        let post_id = &message_id.post_id;
-        if post_id.trim().is_empty() {
-            env::panic_str("'post_id' is empty or whitespace");
-        }
-
-        let msg_idx = u64::from(message_id.msg_idx.clone());
-        if let Some(post) = self.posts.get(post_id) {
-            let max_idx = post.messages.len() - 1;
-            if msg_idx > max_idx {
-                env::panic_str("'msg_idx' is out of bounds");
-            }
-        }
-    }
-
-    // TODO: Revise this
-    // fn update_message_likes_count(&mut self, message_id: &InputMessageId, is_liked: bool) {
-    //     let post_id = &message_id.post_id;
-    //     let msg_idx = u64::from(message_id.msg_idx.clone());
-
-    //     let mut post = self.posts.get(post_id).unwrap();
-    //     let mut message = post.messages.get(msg_idx).unwrap();
-
-    //     if is_liked {
-    //         message.likes_count += 1;
-    //     } else {
-    //         message.likes_count -= 1;
-    //     }
-    //     post.messages.replace(msg_idx, &message);
-    //     self.posts.insert(post_id, &post);
-    // }
 
     fn execute_toggle_message_like_call(&mut self, message_id: &InputMessageId) -> bool {
         let account_id = env::signer_account_id();
@@ -340,6 +321,37 @@ impl Contract {
 
         is_liked
     }
+
+
+    // TODO: Revise this
+    // fn update_message_likes_count(&mut self, message_id: &InputMessageId, is_liked: bool) {
+    //     let post_id = &message_id.post_id;
+    //     let msg_idx = u64::from(message_id.msg_idx.clone());
+
+    //     let mut post = self.posts.get(post_id).unwrap();
+    //     let mut message = post.messages.get(msg_idx).unwrap();
+
+    //     if is_liked {
+    //         message.likes_count += 1;
+    //     } else {
+    //         message.likes_count -= 1;
+    //     }
+    //     post.messages.replace(msg_idx, &message);
+    //     self.posts.insert(post_id, &post);
+    // }
+
+
+    // TODO: Revise this
+    // fn update_post_likes_count(&mut self, post_id: &PostId, is_liked: bool) {
+    //     let mut post = self.posts.get(post_id).unwrap();
+    //     if is_liked {
+    //         post.likes_count += 1;
+    //     } else {
+    //         post.likes_count -= 1;
+    //     }
+    //     self.posts.insert(post_id, &post);
+    // }
+
 
     fn collect_fee_and_execute_call(&mut self, call: ContractCall) -> Promise {
         ext_ft::ext(self.fee_ft.clone())
