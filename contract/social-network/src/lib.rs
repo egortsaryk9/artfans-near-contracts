@@ -8,6 +8,16 @@ use near_sdk::BorshStorageKey;
 pub mod external;
 pub use crate::external::*;
 
+
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
+pub struct Contract {
+    owner: AccountId,
+    fee_ft: AccountId,
+    posts: LookupMap<PostId, Post>,
+    likes: LookupMap<AccountId, AccountLikesStats>
+}
+
 #[derive(BorshStorageKey, BorshSerialize)]
 pub enum StorageKeys {
     Posts,
@@ -19,26 +29,29 @@ pub enum StorageKeys {
 
 type PostId = String;
 
-#[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
-pub struct Contract {
-    owner: AccountId,
-    fee_ft: AccountId,
-    posts: LookupMap<PostId, Post>,
-    likes: LookupMap<AccountId, AccountLikesStats>
-}
-
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Post {
     messages: Vector<Message>,
-    likes_count: u64
+    // likes_count: u64
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Copy, Clone)]
+pub struct MessagePartialId {
+    id: u64,
+    parent_id: u64 // 0 means the 1st lvl
+}
+
+#[derive(BorshDeserialize, BorshSerialize)]
+pub enum MessagePayload {
+    Text { text: String }
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Message {
+    partial_id: MessagePartialId,
     account: AccountId,
-    text: String,
-    likes_count: u64
+    payload: MessagePayload,
+    // likes_count: u64
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -57,30 +70,30 @@ pub struct AccountLikesStats {
 pub enum ContractCall {
     AddMessage { post_id: PostId, text: String },
     TogglePostLike { post_id: PostId },
-    ToggleMessageLike { message_id: MessageId },
+    ToggleMessageLike { message_id: InputMessageId },
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ContractCallResult {
-    AddMessageResult { message_id: MessageId },
+    AddMessageResult { message_id: InputMessageId },
     TogglePostLikeResult { is_liked: bool },
     ToggleMessageLikeResult { is_liked: bool }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct MessageId {
+pub struct InputMessageId {
     post_id: PostId,
     msg_idx: U64
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct MessageDTO {
+pub struct OutputMessage {
     msg_idx: U64,
     account: AccountId,
-    text: String
+    text: Option<String>
 }
 
 
@@ -109,22 +122,26 @@ impl Contract {
         self.collect_fee_and_execute_call(ContractCall::TogglePostLike { post_id })
     }
 
-    pub fn toggle_message_like(&mut self, message_id: MessageId) -> Promise {
+    pub fn toggle_message_like(&mut self, message_id: InputMessageId) -> Promise {
         self.assert_toggle_message_like_call(&message_id);
         self.collect_fee_and_execute_call(ContractCall::ToggleMessageLike { message_id })
     }
 
-    pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<MessageDTO> {
+    pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<OutputMessage> {
         if let Some(post) = self.posts.get(&post_id) {
             let from = u64::from(from_index);
             let lim = u64::from(limit);
             (from..std::cmp::min(from + lim, post.messages.len()))
                 .map(|idx| {
                     let message = post.messages.get(idx).unwrap();
-                    MessageDTO {
-                        msg_idx: U64(idx),
-                        account: message.account,
-                        text: message.text
+                    match message.payload {
+                        MessagePayload::Text { text } => {
+                            OutputMessage {
+                                msg_idx: U64(idx),
+                                account: message.account,
+                                text: Some(text)
+                            }
+                        }
                     }
                 })
                 .collect()
@@ -140,6 +157,7 @@ impl Contract {
 impl Contract {
 
     fn assert_add_message_call(&self, post_id: &PostId, text: &String) {
+        // TODO: add check for MAX_LENGTH
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
         }
@@ -148,29 +166,28 @@ impl Contract {
         }
     }
 
-    fn execute_add_message_call(&mut self, post_id: &PostId, text: String) -> MessageId {
+    fn execute_add_message_call(&mut self, post_id: &PostId, text: String) -> InputMessageId {
         let account = env::signer_account_id();
         let mut post = self.posts.get(post_id).unwrap_or_else(|| {
-            Post {
-                messages: Vector::new(
-                    StorageKeys::Messages { 
-                        post_id: env::sha256(post_id.as_bytes()) 
-                    }
-                ),
-                likes_count: 0
-            }
+            self.add_post_storage(post_id)
         });
 
+        let partial_id = MessagePartialId {
+            id: post.messages.len() + 1,
+            parent_id: 0
+        };
+        
         let message = Message {
+            partial_id: partial_id,
             account,
-            text,
-            likes_count: 0
+            payload: MessagePayload::Text { text },
+            // likes_count: 0
         };
 
         post.messages.push(&message);
         self.posts.insert(post_id, &post);
 
-        MessageId {
+        InputMessageId {
             post_id: post_id.clone(), 
             msg_idx: U64(post.messages.len() - 1)
         }
@@ -182,24 +199,40 @@ impl Contract {
         }
     }
 
-    fn put_account_likes_stats(&mut self, account_id: &AccountId) -> AccountLikesStats {
-        let acc_likes_stats = AccountLikesStats {
+    fn add_post_storage(&mut self, post_id: &PostId) -> Post {
+        let post = Post {
+            messages: Vector::new(
+                StorageKeys::Messages { 
+                    post_id: env::sha256(post_id.as_bytes()) 
+                }
+            ),
+          // likes_count: 0
+        };
+
+        self.posts.insert(post_id, &post);
+
+        post
+    }
+
+    fn add_account_likes_stats_storage(&mut self, account_id: &AccountId) -> AccountLikesStats {
+        let likes_stats = AccountLikesStats {
             posts: LookupMap::new(
                 StorageKeys::AccountLikedPosts { 
                     account_id: env::sha256(account_id.as_bytes()) 
                 }
             )
         };
-        self.likes.insert(account_id, &acc_likes_stats);
-        acc_likes_stats
+        self.likes.insert(account_id, &likes_stats);
+
+        likes_stats
     }
 
-    fn put_account_liked_post_stat(&mut self, account_id: &AccountId, post_id: &PostId) -> AccountLikedPostWithMessages {
-        let mut acc_likes_stats = self.likes.get(account_id).unwrap_or_else(|| {
-            self.put_account_likes_stats(account_id)
+    fn add_account_liked_post_storage(&mut self, account_id: &AccountId, post_id: &PostId) -> AccountLikedPostWithMessages {
+        let mut likes_stats = self.likes.get(account_id).unwrap_or_else(|| {
+            self.add_account_likes_stats_storage(account_id)
         });
 
-        let acc_liked_post = AccountLikedPostWithMessages {
+        let liked_post_stat = AccountLikedPostWithMessages {
             is_post_liked: false,
             liked_messages: LookupSet::new(
                 StorageKeys::AccountLikedMessages {
@@ -209,46 +242,46 @@ impl Contract {
             )
         };
 
-        acc_likes_stats.posts.insert(post_id, &acc_liked_post);
-        self.likes.insert(account_id, &acc_likes_stats);
+        likes_stats.posts.insert(post_id, &liked_post_stat);
+        self.likes.insert(account_id, &likes_stats);
 
-        acc_liked_post
+        liked_post_stat
     }
 
     // TODO: Revise this
-    fn update_post_likes_count(&mut self, post_id: &PostId, is_liked: bool) {
-        let mut post = self.posts.get(post_id).unwrap();
-        if is_liked {
-            post.likes_count += 1;
-        } else {
-            post.likes_count -= 1;
-        }
-        self.posts.insert(post_id, &post);
-    }
+    // fn update_post_likes_count(&mut self, post_id: &PostId, is_liked: bool) {
+    //     let mut post = self.posts.get(post_id).unwrap();
+    //     if is_liked {
+    //         post.likes_count += 1;
+    //     } else {
+    //         post.likes_count -= 1;
+    //     }
+    //     self.posts.insert(post_id, &post);
+    // }
 
     fn execute_toggle_post_like_call(&mut self, post_id: &PostId) -> bool {
         let account_id = env::signer_account_id();
 
-        let mut acc_likes_stats = self.likes.get(&account_id).unwrap_or_else(|| {
-            self.put_account_likes_stats(&account_id)
+        let mut likes_stats = self.likes.get(&account_id).unwrap_or_else(|| {
+            self.add_account_likes_stats_storage(&account_id)
         });
 
-        let mut acc_liked_post = acc_likes_stats.posts.get(post_id).unwrap_or_else(|| {
-            self.put_account_liked_post_stat(&account_id, post_id)
+        let mut liked_post_stat = likes_stats.posts.get(post_id).unwrap_or_else(|| {
+            self.add_account_liked_post_storage(&account_id, post_id)
         });
 
-        let is_liked = !acc_liked_post.is_post_liked;
-        acc_liked_post.is_post_liked = is_liked;
-        acc_likes_stats.posts.insert(post_id, &acc_liked_post);
-        self.likes.insert(&account_id, &acc_likes_stats);
+        let is_liked = !liked_post_stat.is_post_liked;
+        liked_post_stat.is_post_liked = is_liked;
+        likes_stats.posts.insert(post_id, &liked_post_stat);
+        self.likes.insert(&account_id, &likes_stats);
 
         // TODO: Replace with Event ?
-        self.update_post_likes_count(post_id, is_liked);
+        // self.update_post_likes_count(post_id, is_liked);
 
         is_liked
     }
 
-    fn assert_toggle_message_like_call(&self, message_id: &MessageId) {
+    fn assert_toggle_message_like_call(&self, message_id: &InputMessageId) {
         let post_id = &message_id.post_id;
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
@@ -264,46 +297,46 @@ impl Contract {
     }
 
     // TODO: Revise this
-    fn update_message_likes_count(&mut self, message_id: &MessageId, is_liked: bool) {
-        let post_id = &message_id.post_id;
-        let msg_idx = u64::from(message_id.msg_idx.clone());
+    // fn update_message_likes_count(&mut self, message_id: &InputMessageId, is_liked: bool) {
+    //     let post_id = &message_id.post_id;
+    //     let msg_idx = u64::from(message_id.msg_idx.clone());
 
-        let mut post = self.posts.get(post_id).unwrap();
-        let mut message = post.messages.get(msg_idx).unwrap();
+    //     let mut post = self.posts.get(post_id).unwrap();
+    //     let mut message = post.messages.get(msg_idx).unwrap();
 
-        if is_liked {
-            message.likes_count += 1;
-        } else {
-            message.likes_count -= 1;
-        }
-        post.messages.replace(msg_idx, &message);
-        self.posts.insert(post_id, &post);
-    }
+    //     if is_liked {
+    //         message.likes_count += 1;
+    //     } else {
+    //         message.likes_count -= 1;
+    //     }
+    //     post.messages.replace(msg_idx, &message);
+    //     self.posts.insert(post_id, &post);
+    // }
 
-    fn execute_toggle_message_like_call(&mut self, message_id: &MessageId) -> bool {
+    fn execute_toggle_message_like_call(&mut self, message_id: &InputMessageId) -> bool {
         let account_id = env::signer_account_id();
         let post_id = &message_id.post_id;
         let msg_idx = u64::from(message_id.msg_idx.clone());
 
-        let mut acc_likes_stats = self.likes.get(&account_id).unwrap_or_else(|| {
-            self.put_account_likes_stats(&account_id)
+        let mut likes_stats = self.likes.get(&account_id).unwrap_or_else(|| {
+            self.add_account_likes_stats_storage(&account_id)
         });
 
-        let mut acc_liked_post = acc_likes_stats.posts.get(post_id).unwrap_or_else(|| {
-            self.put_account_liked_post_stat(&account_id, post_id)
+        let mut liked_post_stat = likes_stats.posts.get(post_id).unwrap_or_else(|| {
+            self.add_account_liked_post_storage(&account_id, post_id)
         });
 
-        let is_liked = !acc_liked_post.liked_messages.contains(&msg_idx);
+        let is_liked = !liked_post_stat.liked_messages.contains(&msg_idx);
         if is_liked {
-            acc_liked_post.liked_messages.remove(&msg_idx);
+            liked_post_stat.liked_messages.remove(&msg_idx);
         } else {
-            acc_liked_post.liked_messages.insert(&msg_idx);
+            liked_post_stat.liked_messages.insert(&msg_idx);
         }
-        acc_likes_stats.posts.insert(post_id, &acc_liked_post);
-        self.likes.insert(&account_id, &acc_likes_stats);
+        likes_stats.posts.insert(post_id, &liked_post_stat);
+        self.likes.insert(&account_id, &likes_stats);
 
         // TODO: Replace with Event ?
-        self.update_message_likes_count(message_id, is_liked);
+        // self.update_message_likes_count(message_id, is_liked);
 
         is_liked
     }
