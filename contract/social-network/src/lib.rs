@@ -68,7 +68,7 @@ pub struct MessageId {
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MessageDTO {
-    message_id: MessageId,
+    idx: U64,
     account: AccountId,
     text: String
 }
@@ -112,10 +112,7 @@ impl Contract {
                 .map(|idx| {
                     let message = post.messages.get(idx).unwrap();
                     MessageDTO {
-                        message_id: MessageId {
-                            post_id: post_id.clone(),
-                            message_idx: U64(idx)
-                        },
+                        idx: U64(idx),
                         account: message.account,
                         text: message.text
                     }
@@ -141,10 +138,10 @@ impl Contract {
         }
     }
 
-    fn execute_add_message_call(&mut self, post_id: PostId, text: String) -> MessageId {
+    fn execute_add_message_call(&mut self, post_id: &PostId, text: String) -> MessageId {
         let account = env::signer_account_id();
 
-        let mut post = self.posts.get(&post_id).unwrap_or_else(|| {
+        let mut post = self.posts.get(post_id).unwrap_or_else(|| {
             let mut pref = Vec::with_capacity(33);
             pref.push(b'p');
             pref.extend(env::sha256(post_id.as_bytes()));
@@ -161,10 +158,10 @@ impl Contract {
         };
 
         post.messages.push(&message);
-        self.posts.insert(&post_id, &post);
+        self.posts.insert(post_id, &post);
 
         MessageId {
-            post_id, 
+            post_id: post_id.clone(), 
             message_idx: U64(post.messages.len() - 1)
         }
     }
@@ -175,7 +172,7 @@ impl Contract {
         }
     }
 
-    fn execute_toggle_post_like_call(&mut self, post_id: PostId) -> bool {
+    fn execute_toggle_post_like_call(&mut self, post_id: &PostId) -> bool {
         let account = env::signer_account_id();
 
         let mut likes_stat = self.likes.get(&account).unwrap_or_else(|| {
@@ -198,24 +195,24 @@ impl Contract {
                 liked_messages_idx: LookupSet::new(pref_2)
             };
 
-            likes_stat.posts.insert(&post_id, &liked_post);
+            likes_stat.posts.insert(post_id, &liked_post);
             likes_stat
         });
 
-        let mut liked_post = likes_stat.posts.get(&post_id).unwrap();
+        let mut liked_post = likes_stat.posts.get(post_id).unwrap();
         let is_liked = !liked_post.is_post_liked;
         liked_post.is_post_liked = is_liked;
-        likes_stat.posts.insert(&post_id, &liked_post);
+        likes_stat.posts.insert(post_id, &liked_post);
         self.likes.insert(&account, &likes_stat);
 
         // TODO: Revise
-        let mut post = self.posts.get(&post_id).unwrap();
+        let mut post = self.posts.get(post_id).unwrap();
         if is_liked {
             post.likes_count += 1;
         } else {
             post.likes_count -= 1;
         }
-        self.posts.insert(&post_id, &post);
+        self.posts.insert(post_id, &post);
 
         is_liked
     }
@@ -227,20 +224,20 @@ impl Contract {
             env::panic_str("'post_id' is empty or whitespace");
         }
 
-        let msg_idx = &message_id.message_idx;
+        let msg_idx = u64::from(message_id.message_idx.clone());
         if let Some(post) = self.posts.get(post_id) {
-            let max_idx = U64(post.messages.len() - 1);
-            if msg_idx > &max_idx {
+            let max_idx = post.messages.len() - 1;
+            if msg_idx > max_idx {
                 env::panic_str("'message_idx' is out of bounds");
             }
         }
     }
 
 
-    fn execute_toggle_message_like_call(&mut self, message_id: MessageId) -> bool {
+    fn execute_toggle_message_like_call(&mut self, message_id: &MessageId) -> bool {
         let account = env::signer_account_id();
-        let post_id = message_id.post_id;
-        let msg_idx = u64::from(message_id.message_idx);
+        let post_id = &message_id.post_id;
+        let msg_idx = u64::from(message_id.message_idx.clone());
 
         let mut likes_stat = self.likes.get(&account).unwrap_or_else(|| {
             // Initialize account likes statistic for this post
@@ -262,22 +259,22 @@ impl Contract {
                 liked_messages_idx: LookupSet::new(pref_2)
             };
 
-            likes_stat.posts.insert(&post_id, &liked_post);
+            likes_stat.posts.insert(post_id, &liked_post);
             likes_stat
         });
 
-        let mut liked_post = likes_stat.posts.get(&post_id).unwrap();
+        let mut liked_post = likes_stat.posts.get(post_id).unwrap();
         let is_liked = !liked_post.liked_messages_idx.contains(&msg_idx);
         if is_liked {
             liked_post.liked_messages_idx.remove(&msg_idx);
         } else {
             liked_post.liked_messages_idx.insert(&msg_idx);
         }
-        likes_stat.posts.insert(&post_id, &liked_post);
+        likes_stat.posts.insert(post_id, &liked_post);
         self.likes.insert(&account, &likes_stat);
 
         // TODO: Revise
-        let mut post = self.posts.get(&post_id).unwrap(); // revise
+        let mut post = self.posts.get(post_id).unwrap(); // revise
         let mut message = post.messages.get(msg_idx).unwrap();
         if is_liked {
             message.likes_count += 1;
@@ -285,7 +282,7 @@ impl Contract {
             message.likes_count -= 1;
         }
         post.messages.replace(msg_idx, &message);
-        self.posts.insert(&post_id, &post);
+        self.posts.insert(post_id, &post);
 
         is_liked
     }
@@ -311,15 +308,15 @@ impl Contract {
             PromiseResult::Successful(_) => {
                 match call {
                     ContractCall::AddMessage { post_id, text } => {
-                        let message_id = self.execute_add_message_call(post_id, text);
+                        let message_id = self.execute_add_message_call(&post_id, text);
                         return ContractCallResult::AddMessageResult { message_id }
                     },
                     ContractCall::TogglePostLike { post_id } => {
-                        let is_liked = self.execute_toggle_post_like_call(post_id);
+                        let is_liked = self.execute_toggle_post_like_call(&post_id);
                         return ContractCallResult::TogglePostLikeResult { is_liked }
                     },
                     ContractCall::ToggleMessageLike { message_id } => {
-                        let is_liked = self.execute_toggle_message_like_call(message_id);
+                        let is_liked = self.execute_toggle_message_like_call(&message_id);
                         return ContractCallResult::ToggleMessageLikeResult { is_liked }
                     },
                 }
