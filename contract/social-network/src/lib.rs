@@ -195,7 +195,9 @@ impl Contract {
     }
 
     fn put_account_liked_post_stat(&mut self, account_id: &AccountId, post_id: &PostId) -> AccountLikedPostWithMessages {
-        let mut acc_likes_stats = self.likes.get(account_id).unwrap_or_else(|| {self.put_account_likes_stats(account_id)});
+        let mut acc_likes_stats = self.likes.get(account_id).unwrap_or_else(|| {
+            self.put_account_likes_stats(account_id)
+        });
 
         let acc_liked_post = AccountLikedPostWithMessages {
             is_post_liked: false,
@@ -211,6 +213,17 @@ impl Contract {
         self.likes.insert(account_id, &acc_likes_stats);
 
         acc_liked_post
+    }
+
+    // TODO: Revise this
+    fn update_post_likes_count(&mut self, post_id: &PostId, is_liked: bool) {
+        let mut post = self.posts.get(post_id).unwrap();
+        if is_liked {
+            post.likes_count += 1;
+        } else {
+            post.likes_count -= 1;
+        }
+        self.posts.insert(post_id, &post);
     }
 
     fn execute_toggle_post_like_call(&mut self, post_id: &PostId) -> bool {
@@ -229,19 +242,11 @@ impl Contract {
         acc_likes_stats.posts.insert(post_id, &acc_liked_post);
         self.likes.insert(&account_id, &acc_likes_stats);
 
-
-        // TODO: Revise
-        let mut post = self.posts.get(post_id).unwrap();
-        if is_liked {
-            post.likes_count += 1;
-        } else {
-            post.likes_count -= 1;
-        }
-        self.posts.insert(post_id, &post);
+        // TODO: Replace with Event ?
+        self.update_post_likes_count(post_id, is_liked);
 
         is_liked
     }
-
 
     fn assert_toggle_message_like_call(&self, message_id: &MessageId) {
         let post_id = &message_id.post_id;
@@ -258,6 +263,22 @@ impl Contract {
         }
     }
 
+    // TODO: Revise this
+    fn update_message_likes_count(&mut self, message_id: &MessageId, is_liked: bool) {
+        let post_id = &message_id.post_id;
+        let msg_idx = u64::from(message_id.msg_idx.clone());
+
+        let mut post = self.posts.get(post_id).unwrap();
+        let mut message = post.messages.get(msg_idx).unwrap();
+
+        if is_liked {
+            message.likes_count += 1;
+        } else {
+            message.likes_count -= 1;
+        }
+        post.messages.replace(msg_idx, &message);
+        self.posts.insert(post_id, &post);
+    }
 
     fn execute_toggle_message_like_call(&mut self, message_id: &MessageId) -> bool {
         let account_id = env::signer_account_id();
@@ -281,17 +302,8 @@ impl Contract {
         acc_likes_stats.posts.insert(post_id, &acc_liked_post);
         self.likes.insert(&account_id, &acc_likes_stats);
 
-
-        // TODO: Revise
-        let mut post = self.posts.get(post_id).unwrap(); // revise
-        let mut message = post.messages.get(msg_idx).unwrap();
-        if is_liked {
-            message.likes_count += 1;
-        } else {
-            message.likes_count -= 1;
-        }
-        post.messages.replace(msg_idx, &message);
-        self.posts.insert(post_id, &post);
+        // TODO: Replace with Event ?
+        self.update_message_likes_count(message_id, is_liked);
 
         is_liked
     }
