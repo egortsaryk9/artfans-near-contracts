@@ -32,14 +32,14 @@ pub struct Message {
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct AccountLikedPostState {
+pub struct AccountLikesPostStat {
     is_post_liked: bool,
-    liked_messages_idx: LookupSet<u64>
+    liked_messages: LookupSet<u64>
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct AccountLikesStat {
-    posts: LookupMap<PostId, AccountLikedPostState>
+    posts: LookupMap<PostId, AccountLikesPostStat>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -62,13 +62,13 @@ pub enum ContractCallResult {
 #[serde(crate = "near_sdk::serde")]
 pub struct MessageId {
     post_id: PostId,
-    message_idx: U64
+    msg_idx: U64
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MessageDTO {
-    idx: U64,
+    msg_idx: U64,
     account: AccountId,
     text: String
 }
@@ -112,7 +112,7 @@ impl Contract {
                 .map(|idx| {
                     let message = post.messages.get(idx).unwrap();
                     MessageDTO {
-                        idx: U64(idx),
+                        msg_idx: U64(idx),
                         account: message.account,
                         text: message.text
                     }
@@ -162,7 +162,7 @@ impl Contract {
 
         MessageId {
             post_id: post_id.clone(), 
-            message_idx: U64(post.messages.len() - 1)
+            msg_idx: U64(post.messages.len() - 1)
         }
     }
 
@@ -190,19 +190,19 @@ impl Contract {
             pref_2.extend(env::sha256(account.as_bytes()));
             pref_2.extend(env::sha256(post_id.as_bytes()));
 
-            let liked_post = AccountLikedPostState {
+            let post_stat = AccountLikesPostStat {
                 is_post_liked: false,
-                liked_messages_idx: LookupSet::new(pref_2)
+                liked_messages: LookupSet::new(pref_2)
             };
 
-            likes_stat.posts.insert(post_id, &liked_post);
+            likes_stat.posts.insert(post_id, &post_stat);
             likes_stat
         });
 
-        let mut liked_post = likes_stat.posts.get(post_id).unwrap();
-        let is_liked = !liked_post.is_post_liked;
-        liked_post.is_post_liked = is_liked;
-        likes_stat.posts.insert(post_id, &liked_post);
+        let mut post_stat = likes_stat.posts.get(post_id).unwrap();
+        let is_liked = !post_stat.is_post_liked;
+        post_stat.is_post_liked = is_liked;
+        likes_stat.posts.insert(post_id, &post_stat);
         self.likes.insert(&account, &likes_stat);
 
         // TODO: Revise
@@ -224,11 +224,11 @@ impl Contract {
             env::panic_str("'post_id' is empty or whitespace");
         }
 
-        let msg_idx = u64::from(message_id.message_idx.clone());
+        let msg_idx = u64::from(message_id.msg_idx.clone());
         if let Some(post) = self.posts.get(post_id) {
             let max_idx = post.messages.len() - 1;
             if msg_idx > max_idx {
-                env::panic_str("'message_idx' is out of bounds");
+                env::panic_str("'msg_idx' is out of bounds");
             }
         }
     }
@@ -237,7 +237,7 @@ impl Contract {
     fn execute_toggle_message_like_call(&mut self, message_id: &MessageId) -> bool {
         let account = env::signer_account_id();
         let post_id = &message_id.post_id;
-        let msg_idx = u64::from(message_id.message_idx.clone());
+        let msg_idx = u64::from(message_id.msg_idx.clone());
 
         let mut likes_stat = self.likes.get(&account).unwrap_or_else(|| {
             // Initialize account likes statistic for this post
@@ -254,23 +254,23 @@ impl Contract {
             pref_2.extend(env::sha256(account.as_bytes()));
             pref_2.extend(env::sha256(post_id.as_bytes()));
 
-            let liked_post = AccountLikedPostState {
+            let post_stat = AccountLikesPostStat {
                 is_post_liked: false,
-                liked_messages_idx: LookupSet::new(pref_2)
+                liked_messages: LookupSet::new(pref_2)
             };
 
-            likes_stat.posts.insert(post_id, &liked_post);
+            likes_stat.posts.insert(post_id, &post_stat);
             likes_stat
         });
 
-        let mut liked_post = likes_stat.posts.get(post_id).unwrap();
-        let is_liked = !liked_post.liked_messages_idx.contains(&msg_idx);
+        let mut post_stat = likes_stat.posts.get(post_id).unwrap();
+        let is_liked = !post_stat.liked_messages.contains(&msg_idx);
         if is_liked {
-            liked_post.liked_messages_idx.remove(&msg_idx);
+            post_stat.liked_messages.remove(&msg_idx);
         } else {
-            liked_post.liked_messages_idx.insert(&msg_idx);
+            post_stat.liked_messages.insert(&msg_idx);
         }
-        likes_stat.posts.insert(post_id, &liked_post);
+        likes_stat.posts.insert(post_id, &post_stat);
         self.likes.insert(&account, &likes_stat);
 
         // TODO: Revise
