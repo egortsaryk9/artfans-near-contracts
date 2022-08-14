@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, log, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
 use near_sdk::json_types::{U128, U64};
-use near_sdk::collections::{LookupMap, LookupSet, Vector};
+use near_sdk::collections::{LookupMap, LookupSet, UnorderedMap};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::BorshStorageKey;
 
@@ -28,17 +28,12 @@ pub enum StorageKeys {
 }
 
 type PostId = String;
+type MessageId = u64;
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Post {
-    messages: Vector<Message>,
-    // likes_count: u64
-}
-
-#[derive(BorshDeserialize, BorshSerialize, Copy, Clone)]
-pub struct MessagePartialId {
-    id: u64,
-    parent_id: u64 // 0 means the 1st lvl
+    last_message_id: MessageId,
+    messages: UnorderedMap<MessageId, Message>,
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -48,10 +43,8 @@ pub enum MessagePayload {
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Message {
-    partial_id: MessagePartialId,
     account: AccountId,
     payload: MessagePayload,
-    // likes_count: u64
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -70,28 +63,28 @@ pub struct AccountLikesStats {
 pub enum ContractCall {
     AddMessage { post_id: PostId, text: String },
     TogglePostLike { post_id: PostId },
-    ToggleMessageLike { message_id: InputMessageId },
+    ToggleMessageLike { message_id: PostMessageId },
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ContractCallResult {
-    AddMessageResult { message_id: InputMessageId },
+    AddMessageResult { id: PostMessageId },
     TogglePostLikeResult { is_liked: bool },
     ToggleMessageLikeResult { is_liked: bool }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct InputMessageId {
+pub struct PostMessageId {
     post_id: PostId,
-    msg_idx: U64
+    msg_id: U64
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct OutputMessage {
-    msg_idx: U64,
+    msg_id: U64,
     account: AccountId,
     text: Option<String>
 }
@@ -122,7 +115,7 @@ impl Contract {
         self.collect_fee_and_execute_call(ContractCall::TogglePostLike { post_id })
     }
 
-    pub fn toggle_message_like(&mut self, message_id: InputMessageId) -> Promise {
+    pub fn toggle_message_like(&mut self, message_id: PostMessageId) -> Promise {
         self.assert_toggle_message_like_call(&message_id);
         self.collect_fee_and_execute_call(ContractCall::ToggleMessageLike { message_id })
     }
@@ -131,13 +124,16 @@ impl Contract {
         if let Some(post) = self.posts.get(&post_id) {
             let from = u64::from(from_index);
             let lim = u64::from(limit);
+            let keys = post.messages.keys_as_vector();
+            let values = post.messages.values_as_vector();
             (from..std::cmp::min(from + lim, post.messages.len()))
                 .map(|idx| {
-                    let message = post.messages.get(idx).unwrap();
+                    let id = keys.get(idx).unwrap();
+                    let message = values.get(idx).unwrap();
                     match message.payload {
                         MessagePayload::Text { text } => {
                             OutputMessage {
-                                msg_idx: U64(idx),
+                                msg_id: U64(id),
                                 account: message.account,
                                 text: Some(text)
                             }
@@ -175,17 +171,16 @@ impl Contract {
         }
     }
 
-    fn assert_toggle_message_like_call(&self, message_id: &InputMessageId) {
+    fn assert_toggle_message_like_call(&self, message_id: &PostMessageId) {
         let post_id = &message_id.post_id;
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
         }
 
-        let msg_idx = u64::from(message_id.msg_idx.clone());
+        let msg_id = u64::from(message_id.msg_id.clone());
         if let Some(post) = self.posts.get(post_id) {
-            let max_idx = post.messages.len() - 1;
-            if msg_idx > max_idx {
-                env::panic_str("'msg_idx' is out of bounds");
+            if !post.messages.get(&msg_id).is_some() {
+                env::panic_str("'msg_id' does not exist");
             }
         }
     }
@@ -195,7 +190,8 @@ impl Contract {
 
     fn add_post_storage(&mut self, post_id: &PostId) -> Post {
         let post = Post {
-            messages: Vector::new(
+            last_message_id: 0,
+            messages: UnorderedMap::new(
                 StorageKeys::Messages { 
                     post_id: env::sha256(post_id.as_bytes()) 
                 }
@@ -245,31 +241,24 @@ impl Contract {
     
     // Execute call logic
 
-    fn execute_add_message_call(&mut self, post_id: &PostId, text: String) -> InputMessageId {
+    fn execute_add_message_call(&mut self, post_id: &PostId, text: String) -> MessageId {
         let account = env::signer_account_id();
         let mut post = self.posts.get(post_id).unwrap_or_else(|| {
             self.add_post_storage(post_id)
         });
 
-        let partial_id = MessagePartialId {
-            id: post.messages.len() + 1,
-            parent_id: 0
-        };
-        
+        let message_id = post.last_message_id + 1;
         let message = Message {
-            partial_id: partial_id,
             account,
             payload: MessagePayload::Text { text },
             // likes_count: 0
         };
+        post.messages.insert(&message_id, &message);
 
-        post.messages.push(&message);
+        post.last_message_id = message_id;
         self.posts.insert(post_id, &post);
 
-        InputMessageId {
-            post_id: post_id.clone(), 
-            msg_idx: U64(post.messages.len() - 1)
-        }
+        message_id
     }
 
     fn execute_toggle_post_like_call(&mut self, post_id: &PostId) -> bool {
@@ -294,10 +283,10 @@ impl Contract {
         is_liked
     }
 
-    fn execute_toggle_message_like_call(&mut self, message_id: &InputMessageId) -> bool {
+    fn execute_toggle_message_like_call(&mut self, message_id: &PostMessageId) -> bool {
         let account_id = env::signer_account_id();
         let post_id = &message_id.post_id;
-        let msg_idx = u64::from(message_id.msg_idx.clone());
+        let msg_id = u64::from(message_id.msg_id.clone());
 
         let mut likes_stats = self.likes.get(&account_id).unwrap_or_else(|| {
             self.add_account_likes_stats_storage(&account_id)
@@ -307,11 +296,11 @@ impl Contract {
             self.add_account_liked_post_storage(&account_id, post_id)
         });
 
-        let is_liked = !liked_post_stat.liked_messages.contains(&msg_idx);
+        let is_liked = !liked_post_stat.liked_messages.contains(&msg_id);
         if is_liked {
-            liked_post_stat.liked_messages.remove(&msg_idx);
+            liked_post_stat.liked_messages.remove(&msg_id);
         } else {
-            liked_post_stat.liked_messages.insert(&msg_idx);
+            liked_post_stat.liked_messages.insert(&msg_id);
         }
         likes_stats.posts.insert(post_id, &liked_post_stat);
         self.likes.insert(&account_id, &likes_stats);
@@ -324,7 +313,7 @@ impl Contract {
 
 
     // TODO: Revise this
-    // fn update_message_likes_count(&mut self, message_id: &InputMessageId, is_liked: bool) {
+    // fn update_message_likes_count(&mut self, message_id: &PostMessageId, is_liked: bool) {
     //     let post_id = &message_id.post_id;
     //     let msg_idx = u64::from(message_id.msg_idx.clone());
 
@@ -374,8 +363,8 @@ impl Contract {
             PromiseResult::Successful(_) => {
                 match call {
                     ContractCall::AddMessage { post_id, text } => {
-                        let message_id = self.execute_add_message_call(&post_id, text);
-                        return ContractCallResult::AddMessageResult { message_id }
+                        let msg_id = self.execute_add_message_call(&post_id, text);
+                        return ContractCallResult::AddMessageResult { id: PostMessageId { post_id, msg_id: U64(msg_id) } }
                     },
                     ContractCall::TogglePostLike { post_id } => {
                         let is_liked = self.execute_toggle_post_like_call(&post_id);
