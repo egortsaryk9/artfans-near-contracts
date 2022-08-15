@@ -1,7 +1,9 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, log, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
 use near_sdk::json_types::{U128, U64};
-use near_sdk::collections::{LookupMap, LookupSet, Vector, UnorderedSet};
+use near_sdk::collections::{LookupMap, LookupSet, Vector, UnorderedSet
+
+};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::BorshStorageKey;
 use std::convert::From;
@@ -54,6 +56,20 @@ pub enum AccountLike {
     PostLike { post_id: PostId },
     MessageLike { msg_id: MessageId }
 }
+
+impl PartialEq for AccountLike {
+    fn eq(&self, other: &Self) -> bool {
+        use AccountLike::*;
+        match (self, other) {
+            (PostLike { post_id: id1 }, PostLike { post_id: id2 } ) => id1 == id2,
+            (MessageLike { msg_id: id1 }, MessageLike { msg_id: id2 }) => id1.post_id == id2.post_id && id1.msg_idx == id2.msg_idx,
+            _ => false,
+        }
+    }
+
+}
+
+impl Eq for AccountLike {}
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Message {
@@ -413,11 +429,11 @@ impl Contract {
         post.messages.replace(msg_id.msg_idx, &msg);
         self.posts.insert(&msg_id.post_id, &post);
 
-
         // Update account stats
         let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
             self.add_account_stat_storage(&account_id)
         });
+
         let like = AccountLike::MessageLike { msg_id };
         account_stats.recent_likes.remove(&like);
         self.account_stats.insert(&account_id, &account_stats);
