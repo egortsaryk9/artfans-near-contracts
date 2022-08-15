@@ -26,10 +26,7 @@ pub enum StorageKeys {
     PostLikes { post_id: Vec<u8> },
     MessageLikes { post_id: Vec<u8>, msg_idx: u64 },
     AccountsStats,
-    AccountRecentLikes { account_id: Vec<u8> },
-
-    // AccountLikedPosts { account_id: Vec<u8> },
-    // AccountLikedMessages { account_id: Vec<u8>, post_id: Vec<u8> },
+    AccountRecentLikes { account_id: Vec<u8> }
 }
 
 type PostId = String;
@@ -58,19 +55,12 @@ pub enum AccountLike {
     MessageLike { msg_id: MessageId }
 }
 
-
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Message {
     account: AccountId,
     payload: MessagePayload,
     likes: LookupSet<AccountId>
 }
-
-// #[derive(BorshDeserialize, BorshSerialize)]
-// pub struct AccountLikedPostWithMessages {
-//     is_post_liked: bool,
-//     liked_messages: LookupSet<u64>
-// }
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct AccountStats {
@@ -320,28 +310,6 @@ impl Contract {
 
         account_stat
     }
-
-    // fn add_account_liked_post_storage(&mut self, account_id: &AccountId, post_id: &PostId) -> AccountLikedPostWithMessages {
-    //     let mut likes_stats = self.account_stats.get(account_id).unwrap_or_else(|| {
-    //         self.add_account_stat_storage(account_id)
-    //     });
-
-    //     let liked_post_stat = AccountLikedPostWithMessages {
-    //         is_post_liked: false,
-    //         liked_messages: LookupSet::new(
-    //             StorageKeys::AccountLikedMessages {
-    //                 account_id: env::sha256(account_id.as_bytes()), 
-    //                 post_id: env::sha256(post_id.as_bytes()) 
-    //             }
-    //         )
-    //     };
-
-    //     likes_stats.posts.insert(post_id, &liked_post_stat);
-    //     self.account_stats.insert(account_id, &likes_stats);
-
-    //     liked_post_stat
-    // }
-
     
     // Execute call logic
 
