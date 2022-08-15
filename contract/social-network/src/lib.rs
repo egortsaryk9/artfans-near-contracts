@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, log, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
 use near_sdk::json_types::{U128, U64};
-use near_sdk::collections::{LookupMap, LookupSet, Vector};
+use near_sdk::collections::{LookupMap, LookupSet, Vector, UnorderedSet};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::BorshStorageKey;
 use std::convert::From;
@@ -16,7 +16,7 @@ pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
     posts: LookupMap<PostId, Post>,
-    account_likes: LookupMap<AccountId, AccountLikesStats>
+    account_stats: LookupMap<AccountId, AccountStats>
 }
 
 #[derive(BorshStorageKey, BorshSerialize)]
@@ -25,9 +25,11 @@ pub enum StorageKeys {
     Messages { post_id: Vec<u8> },
     PostLikes { post_id: Vec<u8> },
     MessageLikes { post_id: Vec<u8>, msg_idx: u64 },
-    AccountsLikesStats,
-    AccountLikedPosts { account_id: Vec<u8> },
-    AccountLikedMessages { account_id: Vec<u8>, post_id: Vec<u8> },
+    AccountsStats,
+    AccountRecentLikes { account_id: Vec<u8> },
+
+    // AccountLikedPosts { account_id: Vec<u8> },
+    // AccountLikedMessages { account_id: Vec<u8>, post_id: Vec<u8> },
 }
 
 type PostId = String;
@@ -51,10 +53,11 @@ pub enum MessagePayload {
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
-pub enum LikedSource {
+pub enum AccountLike {
     PostLike { post_id: PostId },
     MessageLike { msg_id: MessageId }
 }
+
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Message {
@@ -63,15 +66,16 @@ pub struct Message {
     likes: LookupSet<AccountId>
 }
 
-#[derive(BorshDeserialize, BorshSerialize)]
-pub struct AccountLikedPostWithMessages {
-    is_post_liked: bool,
-    liked_messages: LookupSet<u64>
-}
+// #[derive(BorshDeserialize, BorshSerialize)]
+// pub struct AccountLikedPostWithMessages {
+//     is_post_liked: bool,
+//     liked_messages: LookupSet<u64>
+// }
 
 #[derive(BorshDeserialize, BorshSerialize)]
-pub struct AccountLikesStats {
-    posts: LookupMap<PostId, AccountLikedPostWithMessages>,
+pub struct AccountStats {
+    // posts: LookupMap<PostId, AccountLikedPostWithMessages>,
+    recent_likes: UnorderedSet<AccountLike>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -130,7 +134,7 @@ impl Contract {
             owner,
             fee_ft,
             posts: LookupMap::new(StorageKeys::Posts),
-            account_likes: LookupMap::new(StorageKeys::AccountsLikesStats),
+            account_stats: LookupMap::new(StorageKeys::AccountsStats),
         }
     }
 
@@ -303,39 +307,40 @@ impl Contract {
         post
     }
 
-    fn add_account_likes_stats_storage(&mut self, account_id: &AccountId) -> AccountLikesStats {
-        let likes_stats = AccountLikesStats {
-            posts: LookupMap::new(
-                StorageKeys::AccountLikedPosts { 
+    fn add_account_stat_storage(&mut self, account_id: &AccountId) -> AccountStats {
+        let account_stat = AccountStats {
+            recent_likes: UnorderedSet::new(
+                StorageKeys::AccountRecentLikes { 
                     account_id: env::sha256(account_id.as_bytes()) 
                 }
             )
         };
-        self.account_likes.insert(account_id, &likes_stats);
 
-        likes_stats
+        self.account_stats.insert(account_id, &account_stat);
+
+        account_stat
     }
 
-    fn add_account_liked_post_storage(&mut self, account_id: &AccountId, post_id: &PostId) -> AccountLikedPostWithMessages {
-        let mut likes_stats = self.account_likes.get(account_id).unwrap_or_else(|| {
-            self.add_account_likes_stats_storage(account_id)
-        });
+    // fn add_account_liked_post_storage(&mut self, account_id: &AccountId, post_id: &PostId) -> AccountLikedPostWithMessages {
+    //     let mut likes_stats = self.account_stats.get(account_id).unwrap_or_else(|| {
+    //         self.add_account_stat_storage(account_id)
+    //     });
 
-        let liked_post_stat = AccountLikedPostWithMessages {
-            is_post_liked: false,
-            liked_messages: LookupSet::new(
-                StorageKeys::AccountLikedMessages {
-                    account_id: env::sha256(account_id.as_bytes()), 
-                    post_id: env::sha256(post_id.as_bytes()) 
-                }
-            )
-        };
+    //     let liked_post_stat = AccountLikedPostWithMessages {
+    //         is_post_liked: false,
+    //         liked_messages: LookupSet::new(
+    //             StorageKeys::AccountLikedMessages {
+    //                 account_id: env::sha256(account_id.as_bytes()), 
+    //                 post_id: env::sha256(post_id.as_bytes()) 
+    //             }
+    //         )
+    //     };
 
-        likes_stats.posts.insert(post_id, &liked_post_stat);
-        self.account_likes.insert(account_id, &likes_stats);
+    //     likes_stats.posts.insert(post_id, &liked_post_stat);
+    //     self.account_stats.insert(account_id, &likes_stats);
 
-        liked_post_stat
-    }
+    //     liked_post_stat
+    // }
 
     
     // Execute call logic
@@ -376,20 +381,13 @@ impl Contract {
         }
         self.posts.insert(&post_id, &post);
 
-
         // Update account stats
-        let mut likes_stats = self.account_likes.get(&account_id).unwrap_or_else(|| {
-            self.add_account_likes_stats_storage(&account_id)
+        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+            self.add_account_stat_storage(&account_id)
         });
-        let mut liked_post_stat = likes_stats.posts.get(&post_id).unwrap_or_else(|| {
-            self.add_account_liked_post_storage(&account_id, &post_id)
-        });
-        if liked_post_stat.is_post_liked {
-            env::panic_str("Post is liked already");
-        }
-        liked_post_stat.is_post_liked = true;
-        likes_stats.posts.insert(&post_id, &liked_post_stat);
-        self.account_likes.insert(&account_id, &likes_stats);
+        let like = AccountLike::PostLike { post_id };
+        account_stats.recent_likes.insert(&like);
+        self.account_stats.insert(&account_id, &account_stats);
     }
 
 
@@ -403,20 +401,13 @@ impl Contract {
         }
         self.posts.insert(&post_id, &post);
 
-
         // Update account stats
-        let mut likes_stats = self.account_likes.get(&account_id).unwrap_or_else(|| {
-            self.add_account_likes_stats_storage(&account_id)
+        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+            self.add_account_stat_storage(&account_id)
         });
-        let mut liked_post_stat = likes_stats.posts.get(&post_id).unwrap_or_else(|| {
-            self.add_account_liked_post_storage(&account_id, &post_id)
-        });
-        if !liked_post_stat.is_post_liked {
-            env::panic_str("Post is not liked");
-        }
-        liked_post_stat.is_post_liked = false;
-        likes_stats.posts.insert(&post_id, &liked_post_stat);
-        self.account_likes.insert(&account_id, &likes_stats);
+        let like = AccountLike::PostLike { post_id };
+        account_stats.recent_likes.remove(&like);
+        self.account_stats.insert(&account_id, &account_stats);
     }
 
 
@@ -434,17 +425,12 @@ impl Contract {
 
 
         // Update account stats
-        let mut likes_stats = self.account_likes.get(&account_id).unwrap_or_else(|| {
-            self.add_account_likes_stats_storage(&account_id)
+        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+            self.add_account_stat_storage(&account_id)
         });
-        let mut liked_post_stat = likes_stats.posts.get(&msg_id.post_id).unwrap_or_else(|| {
-            self.add_account_liked_post_storage(&account_id, &msg_id.post_id)
-        });
-        if !liked_post_stat.liked_messages.insert(&msg_id.msg_idx) {
-            env::panic_str("Message is liked already");
-        }
-        likes_stats.posts.insert(&msg_id.post_id, &liked_post_stat);
-        self.account_likes.insert(&account_id, &likes_stats);
+        let like = AccountLike::MessageLike { msg_id };
+        account_stats.recent_likes.insert(&like);
+        self.account_stats.insert(&account_id, &account_stats);
     }
 
 
@@ -462,17 +448,12 @@ impl Contract {
 
 
         // Update account stats
-        let mut likes_stats = self.account_likes.get(&account_id).unwrap_or_else(|| {
-            self.add_account_likes_stats_storage(&account_id)
+        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+            self.add_account_stat_storage(&account_id)
         });
-        let mut liked_post_stat = likes_stats.posts.get(&msg_id.post_id).unwrap_or_else(|| {
-            self.add_account_liked_post_storage(&account_id, &msg_id.post_id)
-        });
-        if !liked_post_stat.liked_messages.remove(&msg_id.msg_idx) {
-            env::panic_str("Message is not liked");
-        }
-        likes_stats.posts.insert(&msg_id.post_id, &liked_post_stat);
-        self.account_likes.insert(&account_id, &likes_stats);
+        let like = AccountLike::MessageLike { msg_id };
+        account_stats.recent_likes.remove(&like);
+        self.account_stats.insert(&account_id, &account_stats);
     }
 
 
