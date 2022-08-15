@@ -64,7 +64,6 @@ pub struct Message {
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct AccountStats {
-    // posts: LookupMap<PostId, AccountLikedPostWithMessages>,
     recent_likes: UnorderedSet<AccountLike>
 }
 
