@@ -11,6 +11,7 @@ use std::convert::From;
 pub mod external;
 pub use crate::external::*;
 
+type PostId = String;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -31,8 +32,6 @@ pub enum StorageKeys {
     AccountRecentLikes { account_id: Vec<u8> }
 }
 
-type PostId = String;
-type ExtPostId = String;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct MessageId {
@@ -66,7 +65,6 @@ impl PartialEq for AccountLike {
             _ => false,
         }
     }
-
 }
 
 impl Eq for AccountLike {}
@@ -85,28 +83,74 @@ pub struct AccountStats {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub enum ContractCall {
-    AddMessage { post_id: ExtPostId, text: String },
-    LikePost { post_id: ExtPostId },
-    UnlikePost { post_id: ExtPostId },
+pub enum Call {
+    AddMessage { post_id: PostId, text: String },
+    LikePost { post_id: PostId },
+    UnlikePost { post_id: PostId },
     LikeMessage { msg_id: ExtMessageId },
     UnlikeMessage { msg_id: ExtMessageId },
 }
 
+type CallExecutionResult = Result<CallSuccess, CallFailure>;
+
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub enum ContractCallResult {
-    AddMessageResult { id: ExtMessageId },
-    LikePostResult,
-    UnlikePostResult,
-    LikeMessageResult,
-    UnlikeMessageResult,
+pub enum CallSuccess {
+    AddMessageSuccess { post_id: String, msg_idx: U64 },
+    LikePostSuccess,
+    UnlikePostSuccess,
+    LikeMessageSuccess,
+    UnlikeMessageSuccess
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum CallFailure {
+    AddMessageFailure,
+    LikePostFailure { reason: LikePostFailureReason },
+    UnlikePostFailure { reason: UnlikePostFailureReason },
+    LikeMessageFailure { reason: LikeMessageFailureReason },
+    UnlikeMessageFailure { reason: UnlikeMessageFailureReason },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum CallResponse {
+    AddMessageResponse { id: ExtMessageId },
+    LikePostResponse,
+    UnlikePostResponse,
+    LikeMessageResponse,
+    UnlikeMessageResponse,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum LikePostFailureReason {
+    PostWasLiked
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum UnlikePostFailureReason {
+    PostWasNotLiked
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum LikeMessageFailureReason {
+    MessageWasLiked
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum UnlikeMessageFailureReason {
+    MessageWasNotLiked
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct ExtMessageId {
-    post_id: ExtPostId,
+    post_id: PostId,
     msg_idx: U64
 }
 
@@ -143,32 +187,32 @@ impl Contract {
         }
     }
 
-    pub fn add_message(&mut self, post_id: ExtPostId, text: String) -> Promise {
+    pub fn add_message(&mut self, post_id: PostId, text: String) -> Promise {
         self.assert_add_message_call(&post_id, &text);
-        self.collect_fee_and_execute_call(ContractCall::AddMessage { post_id, text })
+        self.collect_fee_and_execute_call(Call::AddMessage { post_id, text })
     }
 
-    pub fn like_post(&mut self, post_id: ExtPostId) -> Promise {
+    pub fn like_post(&mut self, post_id: PostId) -> Promise {
         self.assert_like_post_call(&post_id);
-        self.collect_fee_and_execute_call(ContractCall::LikePost { post_id })
+        self.collect_fee_and_execute_call(Call::LikePost { post_id })
     }
 
-    pub fn unlike_post(&mut self, post_id: ExtPostId) -> Promise {
+    pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
         self.assert_unlike_post_call(&post_id);
-        self.collect_fee_and_execute_call(ContractCall::UnlikePost { post_id })
+        self.collect_fee_and_execute_call(Call::UnlikePost { post_id })
     }
 
     pub fn like_message(&mut self, msg_id: ExtMessageId) -> Promise {
         self.assert_like_message_call(&msg_id);
-        self.collect_fee_and_execute_call(ContractCall::LikeMessage { msg_id })
+        self.collect_fee_and_execute_call(Call::LikeMessage { msg_id })
     }
 
     pub fn unlike_message(&mut self, msg_id: ExtMessageId) -> Promise {
         self.assert_unlike_message_call(&msg_id);
-        self.collect_fee_and_execute_call(ContractCall::UnlikeMessage { msg_id })
+        self.collect_fee_and_execute_call(Call::UnlikeMessage { msg_id })
     }
 
-    pub fn get_post_messages(&self, post_id: ExtPostId, from_index: U64, limit: U64) -> Vec<ExtMessage> {
+    pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<ExtMessage> {
         if let Some(post) = self.posts.get(&post_id) {
             let from = u64::from(from_index);
             let lim = u64::from(limit);
@@ -200,7 +244,7 @@ impl Contract {
 
     // Assert incoming action
 
-    fn assert_add_message_call(&self, post_id: &ExtPostId, text: &String) {
+    fn assert_add_message_call(&self, post_id: &PostId, text: &String) {
         self.assert_post_id(post_id);
 
         // TODO: validate 'text' format and length
@@ -209,7 +253,7 @@ impl Contract {
         }
     }
 
-    fn assert_like_post_call(&self, post_id: &ExtPostId) {
+    fn assert_like_post_call(&self, post_id: &PostId) {
         let account_id = env::signer_account_id();
 
         self.assert_post_id(post_id);
@@ -224,7 +268,7 @@ impl Contract {
         // }
     }
 
-    fn assert_unlike_post_call(&self, post_id: &ExtPostId) {
+    fn assert_unlike_post_call(&self, post_id: &PostId) {
         let account_id = env::signer_account_id();
 
         self.assert_post_id(post_id);
@@ -278,7 +322,7 @@ impl Contract {
         }
     }
     
-    fn assert_post_id(&self, post_id: &ExtPostId) {
+    fn assert_post_id(&self, post_id: &PostId) {
         // TODO: validate 'post_id' format and length
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
@@ -328,7 +372,7 @@ impl Contract {
     
     // Execute call logic
 
-    fn execute_add_message_call(&mut self, post_id: PostId, text: String) -> (String, U64) {
+    fn execute_add_message_call(&mut self, post_id: PostId, text: String) -> CallExecutionResult {
         let account = env::signer_account_id();
         
         let mut post = self.posts.get(&post_id).unwrap_or_else(|| {
@@ -349,10 +393,10 @@ impl Contract {
         post.messages.push(&msg);
         self.posts.insert(&post_id, &post);
 
-        (post_id, U64(msg_idx))
+        Ok(CallSuccess::AddMessageSuccess { post_id, msg_idx: U64(msg_idx)})
     }
 
-    fn execute_like_post_call(&mut self, post_id: PostId) {
+    fn execute_like_post_call(&mut self, post_id: PostId) -> CallExecutionResult {
         let account_id = env::signer_account_id();
 
         // Update post stats
@@ -360,7 +404,9 @@ impl Contract {
             self.add_post_storage(&post_id)
         });
         if !post.likes.insert(&account_id) {
-            env::panic_str("Post is liked already");
+            return Err(CallFailure::LikePostFailure {
+                reason: LikePostFailureReason::PostWasLiked
+            })
         }
         self.posts.insert(&post_id, &post);
 
@@ -371,10 +417,12 @@ impl Contract {
         let like = AccountLike::PostLike { post_id };
         account_stats.recent_likes.insert(&like);
         self.account_stats.insert(&account_id, &account_stats);
+
+        Ok(CallSuccess::LikePostSuccess)
     }
 
 
-    fn execute_unlike_post_call(&mut self, post_id: PostId) {
+    fn execute_unlike_post_call(&mut self, post_id: PostId) -> CallExecutionResult {
         let account_id = env::signer_account_id();
 
         // Update post stats
@@ -391,10 +439,11 @@ impl Contract {
         let like = AccountLike::PostLike { post_id };
         account_stats.recent_likes.remove(&like);
         self.account_stats.insert(&account_id, &account_stats);
+
+        Ok(CallSuccess::UnlikePostSuccess)
     }
 
-
-    fn execute_like_message_call(&mut self, msg_id: MessageId) {
+    fn execute_like_message_call(&mut self, msg_id: MessageId) -> CallExecutionResult {
         let account_id = env::signer_account_id();
 
         // Update message stats
@@ -406,7 +455,6 @@ impl Contract {
         post.messages.replace(msg_id.msg_idx, &msg);
         self.posts.insert(&msg_id.post_id, &post);
 
-
         // Update account stats
         let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
             self.add_account_stat_storage(&account_id)
@@ -414,10 +462,12 @@ impl Contract {
         let like = AccountLike::MessageLike { msg_id };
         account_stats.recent_likes.insert(&like);
         self.account_stats.insert(&account_id, &account_stats);
+
+        Ok(CallSuccess::LikeMessageSuccess)
     }
 
 
-    fn execute_unlike_message_call(&mut self, msg_id: MessageId) {
+    fn execute_unlike_message_call(&mut self, msg_id: MessageId) -> CallExecutionResult {
         let account_id = env::signer_account_id();
 
         // Update message stats
@@ -437,10 +487,12 @@ impl Contract {
         let like = AccountLike::MessageLike { msg_id };
         account_stats.recent_likes.remove(&like);
         self.account_stats.insert(&account_id, &account_stats);
+
+        Ok(CallSuccess::UnlikeMessageSuccess)
     }
 
 
-    fn collect_fee_and_execute_call(&mut self, call: ContractCall) -> Promise {
+    fn collect_fee_and_execute_call(&mut self, call: Call) -> Promise {
         ext_ft::ext(self.fee_ft.clone())
             .with_static_gas(Gas(5*TGAS))
             .ft_collect_fee(U128::from(FIXED_FEE))
@@ -452,7 +504,7 @@ impl Contract {
     }
 
     #[private]
-    pub fn on_fee_collected(&mut self, call: ContractCall) -> ContractCallResult {
+    pub fn on_fee_collected(&mut self, call: Call) -> CallResponse {
         if env::promise_results_count() != 1 {
             env::panic_str("Unexpected promise results count");
         }
@@ -460,29 +512,80 @@ impl Contract {
         match env::promise_result(0) {
             PromiseResult::Successful(_) => {
                 match call {
-                    ContractCall::AddMessage { post_id, text } => {
-                        let (post_id, msg_idx) = self.execute_add_message_call(post_id, text);
-                        return ContractCallResult::AddMessageResult { id: ExtMessageId { post_id, msg_idx } }
+                    Call::AddMessage { post_id, text } => {
+                        match self.execute_add_message_call(post_id, text) {
+                            Ok(CallSuccess::AddMessageSuccess { post_id, msg_idx }) => { 
+                                CallResponse::AddMessageResponse { id: ExtMessageId { post_id, msg_idx } } 
+                            },
+                            Err(CallFailure::AddMessageFailure) => {
+                                 // TODO: add rollback
+                                 env::panic_str("AddMessageFailure");
+                            }
+                        }
                     },
-                    ContractCall::LikePost { post_id } => {
-                        self.execute_like_post_call(post_id);
-                        return ContractCallResult::LikePostResult
+                    Call::LikePost { post_id } => {
+                        match self.execute_like_post_call(post_id) {
+                            Ok(CallSuccess::LikePostSuccess) => {
+                                CallResponse::LikePostResponse 
+                            },
+                            Err(CallFailure::LikePostFailure { reason }) => {
+                                match reason {
+                                    LikePostFailureReason::PostWasLiked => {
+                                        // TODO: add rollback
+                                        env::panic_str("LikePostFailureReason::PostWasLiked");
+                                    },
+                                }
+                            }
+                        }
                     },
-                    ContractCall::UnlikePost { post_id } => {
-                        self.execute_unlike_post_call(post_id);
-                        return ContractCallResult::UnlikePostResult
+                    Call::UnlikePost { post_id } => {
+                        match self.execute_unlike_post_call(post_id) {
+                            Ok(CallSuccess::UnlikePostSuccess) => {
+                                CallResponse::UnlikePostResponse 
+                            },
+                            Err(CallFailure::UnlikePostFailure { reason }) => {
+                                match reason {
+                                    UnlikePostFailureReason::PostWasNotLiked => {
+                                        // TODO: add rollback
+                                        env::panic_str("UnlikePostFailureReason::PostWasNotLiked");
+                                    },
+                                }
+                            }
+                        }
                     },
-                    ContractCall::LikeMessage { msg_id } => {
-                        self.execute_like_message_call(msg_id.into());
-                        return ContractCallResult::LikeMessageResult
+                    Call::LikeMessage { msg_id } => {
+                        match self.execute_like_message_call(msg_id.into()) {
+                            Ok(CallSuccess::LikeMessageSuccess) => {
+                                CallResponse::LikeMessageResponse 
+                            },
+                            Err(CallFailure::LikeMessageFailure { reason }) => {
+                                match reason {
+                                    LikeMessageFailureReason::MessageWasLiked => {
+                                        // TODO: add rollback
+                                        env::panic_str("LikeMessageFailureReason::MessageWasLiked");
+                                    },
+                                }
+                            }
+                        }
                     },
-                    ContractCall::UnlikeMessage { msg_id } => {
-                        self.execute_unlike_message_call(msg_id.into());
-                        return ContractCallResult::UnlikeMessageResult
+                    Call::UnlikeMessage { msg_id } => {
+                        match self.execute_unlike_message_call(msg_id.into()) {
+                            Ok(CallSuccess::UnlikeMessageSuccess) => {
+                                CallResponse::UnlikeMessageResponse 
+                            },
+                            Err(CallFailure::UnlikeMessageFailure { reason }) => {
+                                match reason {
+                                    UnlikeMessageFailureReason::MessageWasNotLiked => {
+                                        // TODO: add rollback
+                                        env::panic_str("UnlikeMessageFailureReason::MessageWasNotLiked");
+                                    },
+                                }
+                            }
+                        }
                     },
                 }
             },
             _ => env::panic_str("Fee was not charged"),
-        };
+        }
     }
 }
