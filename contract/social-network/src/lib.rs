@@ -1,9 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, log, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
 use near_sdk::json_types::{U128, U64};
-use near_sdk::collections::{LookupMap, LookupSet, Vector, UnorderedSet
-
-};
+use near_sdk::collections::{LookupMap, Vector, UnorderedSet};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::BorshStorageKey;
 use std::convert::From;
@@ -41,7 +39,7 @@ pub struct MessageId {
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Post {
     messages: Vector<Message>,
-    likes: LookupSet<AccountId>
+    likes: UnorderedSet<AccountId>
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -76,7 +74,7 @@ impl Eq for AccountLike {}
 pub struct Message {
     account: AccountId,
     payload: MessagePayload,
-    likes: LookupSet<AccountId>
+    likes: UnorderedSet<AccountId>
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -160,7 +158,8 @@ impl From<ExtMessageId> for MessageId {
 pub struct MessageDTO {
     msg_idx: U64,
     account: AccountId,
-    text: Option<String>
+    text: Option<String>,
+    likes_count: u64
 }
 
 
@@ -216,8 +215,60 @@ impl Contract {
                             MessageDTO {
                                 msg_idx: U64(idx),
                                 account: message.account,
-                                text: Some(text)
+                                text: Some(text),
+                                likes_count: message.likes.len()
                             }
+                        }
+                    }
+                })
+                .collect()
+        } else {
+          Vec::new()
+        }
+    }
+
+    pub fn get_post_likes(&self, post_id: PostId, from_index: usize, limit: usize) -> Vec<AccountId> {
+        if let Some(post) = self.posts.get(&post_id) {
+            post.likes
+                .iter()
+                .skip(from_index)
+                .take(limit)
+                .collect()
+        } else {
+          Vec::new()
+        }
+    }
+
+    pub fn get_message_likes(&self, msg_id: ExtMessageId, from_index: usize, limit: usize) -> Vec<AccountId> {
+        if let Some(post) = self.posts.get(&msg_id.post_id) {
+            let idx = u64::from(msg_id.msg_idx);
+            if let Some(msg) = post.messages.get(idx) {
+                msg.likes
+                    .iter()
+                    .skip(from_index)
+                    .take(limit)
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+          Vec::new()
+        }
+    }
+    
+    pub fn get_account_last_likes(&self, account_id: AccountId, from_index: usize, limit: usize) -> Vec<(PostId, Option<U64>)> {
+        if let Some(account_stats) = self.account_stats.get(&account_id) {
+            account_stats.recent_likes
+                .iter()
+                .skip(from_index)
+                .take(limit)
+                .map(|item| {
+                    match item {
+                        AccountLike::PostLike { post_id } => {
+                            (post_id, None)
+                        },
+                        AccountLike::MessageLike { msg_id } => {
+                            (msg_id.post_id, Some(U64(msg_id.msg_idx)))
                         }
                     }
                 })
@@ -337,7 +388,7 @@ impl Contract {
                     post_id: env::sha256(post_id.as_bytes()) 
                 }
             ),
-            likes: LookupSet::new(
+            likes: UnorderedSet::new(
                 StorageKeys::PostLikes { 
                     post_id: env::sha256(post_id.as_bytes())
                 }
@@ -376,7 +427,7 @@ impl Contract {
         let msg = Message {
             account,
             payload: MessagePayload::Text { text },
-            likes: LookupSet::new(
+            likes: UnorderedSet::new(
                 StorageKeys::MessageLikes { 
                     post_id: env::sha256(post_id.as_bytes()),
                     msg_idx: msg_idx 
@@ -411,7 +462,6 @@ impl Contract {
 
         Ok(())
     }
-
 
     fn execute_unlike_post_call(&mut self, post_id: PostId) -> Result<(), UnlikePostFailure> {
         let account_id = env::signer_account_id();
@@ -470,7 +520,6 @@ impl Contract {
             None => Err(LikeMessageFailure::PostIsNotFound)
         }
     }
-
 
     fn execute_unlike_message_call(&mut self, msg_id: MessageId) -> Result<(), UnlikeMessageFailure>  {
         let account_id = env::signer_account_id();
@@ -549,7 +598,7 @@ impl Contract {
                     },
                     Call::LikePost { post_id } => {
                         match self.execute_like_post_call(post_id) {
-                            Ok(_) => CallResponse::LikePostResponse,
+                            Ok(_) => CallResult::PostLiked,
                             Err(LikePostFailure::PostIsLikedAlready) => env::panic_str("LikePostFailure::PostIsLikedAlready")
                         }
                     },
