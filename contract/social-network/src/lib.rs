@@ -32,7 +32,6 @@ pub enum StorageKeys {
     AccountRecentLikes { account_id: Vec<u8> }
 }
 
-
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct MessageId {
     post_id: PostId,
@@ -97,12 +96,14 @@ pub enum Call {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub enum CallResponse {
-    AddMessageResponse { id: ExtMessageId },
-    LikePostResponse,
-    UnlikePostResponse,
-    LikeMessageResponse,
-    UnlikeMessageResponse,
+pub enum CallResult {
+    MessageAdded { id: ExtMessageId },
+    PostLiked,
+    PostUnliked,
+    MessageLiked,
+    MessageUnliked,
+
+    AbortedAndRefund
 }
 
 #[derive(Serialize, Deserialize)]
@@ -156,7 +157,7 @@ impl From<ExtMessageId> for MessageId {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct ExtMessage {
+pub struct MessageDTO {
     msg_idx: U64,
     account: AccountId,
     text: Option<String>
@@ -203,7 +204,7 @@ impl Contract {
         self.collect_fee_and_execute_call(Call::UnlikeMessage { msg_id })
     }
 
-    pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<ExtMessage> {
+    pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<MessageDTO> {
         if let Some(post) = self.posts.get(&post_id) {
             let from = u64::from(from_index);
             let lim = u64::from(limit);
@@ -212,7 +213,7 @@ impl Contract {
                     let message = post.messages.get(idx).unwrap();
                     match message.payload {
                         MessagePayload::Text { text } => {
-                            ExtMessage {
+                            MessageDTO {
                                 msg_idx: U64(idx),
                                 account: message.account,
                                 text: Some(text)
@@ -275,6 +276,7 @@ impl Contract {
 
     fn assert_like_message_call(&self, msg_id: &ExtMessageId) {
         let account_id = env::signer_account_id();
+        
         self.assert_message_id(msg_id);
 
         let post_id = &msg_id.post_id;
@@ -515,8 +517,18 @@ impl Contract {
                 )
     }
 
+
+    fn refund_fee_for_failed_call(&mut self, account_id: AccountId) -> Promise {
+        ext_ft::ext(self.fee_ft.clone())
+            .with_static_gas(Gas(5*TGAS))
+            .ft_transfer(account_id, U128::from(FIXED_FEE), None)
+    }
+
+
     #[private]
-    pub fn on_fee_collected(&mut self, call: Call) -> CallResponse {
+    pub fn on_fee_collected(&mut self, call: Call) -> CallResult {
+        let account_id = env::signer_account_id();
+
         if env::promise_results_count() != 1 {
             env::panic_str("Unexpected promise results count");
         }
@@ -527,9 +539,12 @@ impl Contract {
                     Call::AddMessage { post_id, text } => {
                         match self.execute_add_message_call(post_id, text) {
                             Ok((post_id, msg_idx)) => {
-                                CallResponse::AddMessageResponse { id: ExtMessageId { post_id, msg_idx } } 
+                                CallResult::MessageAdded { id: ExtMessageId { post_id, msg_idx } } 
                             },
-                            Err(_) => env::panic_str("AddMessageFailure")
+                            Err(_) => {
+                                self.refund_fee_for_failed_call(account_id);
+                                CallResult::AbortedAndRefund
+                            }
                         }
                     },
                     Call::LikePost { post_id } => {
@@ -540,14 +555,14 @@ impl Contract {
                     },
                     Call::UnlikePost { post_id } => {
                         match self.execute_unlike_post_call(post_id) {
-                            Ok(_) => CallResponse::UnlikePostResponse,
+                            Ok(_) => CallResult::PostUnliked,
                             Err(UnlikePostFailure::PostIsNotFound) => env::panic_str("UnlikePostFailure::PostIsNotFound"),
                             Err(UnlikePostFailure::PostIsNotLikedYet) => env::panic_str("UnlikePostFailure::PostIsNotLikedYet")
                         }
                     },
                     Call::LikeMessage { msg_id } => {
                         match self.execute_like_message_call(msg_id.into()) {
-                            Ok(_) => CallResponse::LikeMessageResponse,
+                            Ok(_) => CallResult::MessageLiked,
                             Err(LikeMessageFailure::PostIsNotFound) => env::panic_str("LikeMessageFailure::PostIsNotFound"),
                             Err(LikeMessageFailure::MessageIsNotFound) => env::panic_str("LikeMessageFailure::MessageIsNotFound"),
                             Err(LikeMessageFailure::MessageIsLikedAlready) => env::panic_str("LikeMessageFailure::MessageIsLikedAlready")
@@ -555,7 +570,7 @@ impl Contract {
                     },
                     Call::UnlikeMessage { msg_id } => {
                         match self.execute_unlike_message_call(msg_id.into()) {
-                            Ok(_) => CallResponse::UnlikeMessageResponse,
+                            Ok(_) => CallResult::MessageUnliked,
                             Err(UnlikeMessageFailure::PostIsNotFound) => env::panic_str("UnlikeMessageFailure::PostIsNotFound"),
                             Err(UnlikeMessageFailure::MessageIsNotFound) => env::panic_str("UnlikeMessageFailure::MessageIsNotFound"),
                             Err(UnlikeMessageFailure::MessageIsNotLikedYet) => env::panic_str("UnlikeMessageFailure::MessageIsNotLikedYet")
