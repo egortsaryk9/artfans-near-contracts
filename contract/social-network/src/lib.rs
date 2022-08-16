@@ -60,8 +60,12 @@ impl PartialEq for AccountLike {
     fn eq(&self, other: &Self) -> bool {
         use AccountLike::*;
         match (self, other) {
-            (PostLike { post_id: id1 }, PostLike { post_id: id2 } ) => id1 == id2,
-            (MessageLike { msg_id: id1 }, MessageLike { msg_id: id2 }) => id1.post_id == id2.post_id && id1.msg_idx == id2.msg_idx,
+            (PostLike { post_id: first }, PostLike { post_id: second } ) => {
+                first == second
+            },
+            (MessageLike { msg_id: first }, MessageLike { msg_id: second }) => {
+                first.post_id == second.post_id && first.msg_idx == second.msg_idx
+            },
             _ => false,
         }
     }
@@ -91,28 +95,6 @@ pub enum Call {
     UnlikeMessage { msg_id: ExtMessageId },
 }
 
-type CallExecutionResult = Result<CallSuccess, CallFailure>;
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub enum CallSuccess {
-    AddMessageSuccess { post_id: String, msg_idx: U64 },
-    LikePostSuccess,
-    UnlikePostSuccess,
-    LikeMessageSuccess,
-    UnlikeMessageSuccess
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub enum CallFailure {
-    AddMessageFailure,
-    LikePostFailure { reason: LikePostFailureReason },
-    UnlikePostFailure { reason: UnlikePostFailureReason },
-    LikeMessageFailure { reason: LikeMessageFailureReason },
-    UnlikeMessageFailure { reason: UnlikeMessageFailureReason },
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum CallResponse {
@@ -125,26 +107,35 @@ pub enum CallResponse {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub enum LikePostFailureReason {
-    PostWasLiked
+pub enum AddMessageFailure {}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum LikePostFailure {
+    PostIsLikedAlready
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub enum UnlikePostFailureReason {
-    PostWasNotLiked
+pub enum UnlikePostFailure {
+    PostIsNotFound,
+    PostIsNotLikedYet
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub enum LikeMessageFailureReason {
-    MessageWasLiked
+pub enum LikeMessageFailure {
+    PostIsNotFound,
+    MessageIsNotFound,
+    MessageIsLikedAlready
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub enum UnlikeMessageFailureReason {
-    MessageWasNotLiked
+pub enum UnlikeMessageFailure {
+    PostIsNotFound,
+    MessageIsNotFound,
+    MessageIsNotLikedYet
 }
 
 #[derive(Serialize, Deserialize)]
@@ -372,7 +363,7 @@ impl Contract {
     
     // Execute call logic
 
-    fn execute_add_message_call(&mut self, post_id: PostId, text: String) -> CallExecutionResult {
+    fn execute_add_message_call(&mut self, post_id: PostId, text: String) -> Result<(PostId, U64), AddMessageFailure> {
         let account = env::signer_account_id();
         
         let mut post = self.posts.get(&post_id).unwrap_or_else(|| {
@@ -393,10 +384,10 @@ impl Contract {
         post.messages.push(&msg);
         self.posts.insert(&post_id, &post);
 
-        Ok(CallSuccess::AddMessageSuccess { post_id, msg_idx: U64(msg_idx)})
+        Ok((post_id, U64(msg_idx)))
     }
 
-    fn execute_like_post_call(&mut self, post_id: PostId) -> CallExecutionResult {
+    fn execute_like_post_call(&mut self, post_id: PostId) -> Result<(), LikePostFailure> {
         let account_id = env::signer_account_id();
 
         // Update post stats
@@ -404,9 +395,7 @@ impl Contract {
             self.add_post_storage(&post_id)
         });
         if !post.likes.insert(&account_id) {
-            return Err(CallFailure::LikePostFailure {
-                reason: LikePostFailureReason::PostWasLiked
-            })
+            return Err(LikePostFailure::PostIsLikedAlready)
         }
         self.posts.insert(&post_id, &post);
 
@@ -418,77 +407,100 @@ impl Contract {
         account_stats.recent_likes.insert(&like);
         self.account_stats.insert(&account_id, &account_stats);
 
-        Ok(CallSuccess::LikePostSuccess)
+        Ok(())
     }
 
 
-    fn execute_unlike_post_call(&mut self, post_id: PostId) -> CallExecutionResult {
+    fn execute_unlike_post_call(&mut self, post_id: PostId) -> Result<(), UnlikePostFailure> {
         let account_id = env::signer_account_id();
 
-        // Update post stats
-        let mut post = self.posts.get(&post_id).expect("Post is not found");
-        if !post.likes.remove(&account_id) {
-            env::panic_str("Post is not liked");
+        match self.posts.get(&post_id) {
+            Some(mut post) => {
+
+                // Update post stats
+                if !post.likes.remove(&account_id) {
+                    return Err(UnlikePostFailure::PostIsNotLikedYet)
+                }
+                self.posts.insert(&post_id, &post);
+
+                // Update account stats
+                let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+                    self.add_account_stat_storage(&account_id)
+                });
+                let like = AccountLike::PostLike { post_id };
+                account_stats.recent_likes.remove(&like);
+                self.account_stats.insert(&account_id, &account_stats);
+
+                Ok(())
+            },
+            None => Err(UnlikePostFailure::PostIsNotFound)
         }
-        self.posts.insert(&post_id, &post);
-
-        // Update account stats
-        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
-            self.add_account_stat_storage(&account_id)
-        });
-        let like = AccountLike::PostLike { post_id };
-        account_stats.recent_likes.remove(&like);
-        self.account_stats.insert(&account_id, &account_stats);
-
-        Ok(CallSuccess::UnlikePostSuccess)
     }
 
-    fn execute_like_message_call(&mut self, msg_id: MessageId) -> CallExecutionResult {
+    fn execute_like_message_call(&mut self, msg_id: MessageId) -> Result<(), LikeMessageFailure> {
         let account_id = env::signer_account_id();
 
-        // Update message stats
-        let mut post = self.posts.get(&msg_id.post_id).expect("Post is not found");
-        let mut msg = post.messages.get(msg_id.msg_idx).expect("Message is not found");
-        if !msg.likes.insert(&account_id) {
-            env::panic_str("Message is liked already");
+        match self.posts.get(&msg_id.post_id) {
+            Some(mut post) => {
+                match post.messages.get(msg_id.msg_idx) {
+                    Some(mut msg) => {
+
+                        // Update message stats
+                        if !msg.likes.insert(&account_id) {
+                            return Err(LikeMessageFailure::MessageIsLikedAlready)
+                        }
+                        post.messages.replace(msg_id.msg_idx, &msg);
+                        self.posts.insert(&msg_id.post_id, &post);
+
+                        // Update account stats
+                        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+                            self.add_account_stat_storage(&account_id)
+                        });
+                        let like = AccountLike::MessageLike { msg_id };
+                        account_stats.recent_likes.insert(&like);
+                        self.account_stats.insert(&account_id, &account_stats);
+
+                        Ok(())
+                    },
+                    None => Err(LikeMessageFailure::MessageIsNotFound)
+                }
+            },
+            None => Err(LikeMessageFailure::PostIsNotFound)
         }
-        post.messages.replace(msg_id.msg_idx, &msg);
-        self.posts.insert(&msg_id.post_id, &post);
-
-        // Update account stats
-        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
-            self.add_account_stat_storage(&account_id)
-        });
-        let like = AccountLike::MessageLike { msg_id };
-        account_stats.recent_likes.insert(&like);
-        self.account_stats.insert(&account_id, &account_stats);
-
-        Ok(CallSuccess::LikeMessageSuccess)
     }
 
 
-    fn execute_unlike_message_call(&mut self, msg_id: MessageId) -> CallExecutionResult {
+    fn execute_unlike_message_call(&mut self, msg_id: MessageId) -> Result<(), UnlikeMessageFailure>  {
         let account_id = env::signer_account_id();
+        
+        match self.posts.get(&msg_id.post_id) {
+            Some(mut post) => {
+                match post.messages.get(msg_id.msg_idx) {
+                    Some(mut msg) => {
 
-        // Update message stats
-        let mut post = self.posts.get(&msg_id.post_id).expect("Post is not found");
-        let mut msg = post.messages.get(msg_id.msg_idx).expect("Message is not found");
-        if !msg.likes.remove(&account_id) {
-            env::panic_str("Message is not liked");
+                        // Update message stats
+                        if !msg.likes.remove(&account_id) {
+                            return Err(UnlikeMessageFailure::MessageIsNotLikedYet)
+                        }
+                        post.messages.replace(msg_id.msg_idx, &msg);
+                        self.posts.insert(&msg_id.post_id, &post);
+
+                        // Update account stats
+                        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+                            self.add_account_stat_storage(&account_id)
+                        });
+
+                        let like = AccountLike::MessageLike { msg_id };
+                        account_stats.recent_likes.remove(&like);
+                        self.account_stats.insert(&account_id, &account_stats);
+
+                        Ok(())
+                    },
+                    None => Err(UnlikeMessageFailure::MessageIsNotFound)
+                }
+            },
+            None => Err(UnlikeMessageFailure::PostIsNotFound)
         }
-        post.messages.replace(msg_id.msg_idx, &msg);
-        self.posts.insert(&msg_id.post_id, &post);
-
-        // Update account stats
-        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
-            self.add_account_stat_storage(&account_id)
-        });
-
-        let like = AccountLike::MessageLike { msg_id };
-        account_stats.recent_likes.remove(&like);
-        self.account_stats.insert(&account_id, &account_stats);
-
-        Ok(CallSuccess::UnlikeMessageSuccess)
     }
 
 
@@ -514,78 +526,39 @@ impl Contract {
                 match call {
                     Call::AddMessage { post_id, text } => {
                         match self.execute_add_message_call(post_id, text) {
-                            Ok(CallSuccess::AddMessageSuccess { post_id, msg_idx }) => { 
+                            Ok((post_id, msg_idx)) => {
                                 CallResponse::AddMessageResponse { id: ExtMessageId { post_id, msg_idx } } 
                             },
-                            Err(CallFailure::AddMessageFailure) => {
-                                 // TODO: add rollback
-                                 env::panic_str("AddMessageFailure");
-                            },
-                            _ => env::panic_str("todo")
+                            Err(_) => env::panic_str("AddMessageFailure")
                         }
                     },
                     Call::LikePost { post_id } => {
                         match self.execute_like_post_call(post_id) {
-                            Ok(CallSuccess::LikePostSuccess) => {
-                                CallResponse::LikePostResponse 
-                            },
-                            Err(CallFailure::LikePostFailure { reason }) => {
-                                match reason {
-                                    LikePostFailureReason::PostWasLiked => {
-                                        // TODO: add rollback
-                                        env::panic_str("LikePostFailureReason::PostWasLiked");
-                                    },
-                                }
-                            },
-                            _ => env::panic_str("todo")
+                            Ok(_) => CallResponse::LikePostResponse,
+                            Err(LikePostFailure::PostIsLikedAlready) => env::panic_str("LikePostFailure::PostIsLikedAlready")
                         }
                     },
                     Call::UnlikePost { post_id } => {
                         match self.execute_unlike_post_call(post_id) {
-                            Ok(CallSuccess::UnlikePostSuccess) => {
-                                CallResponse::UnlikePostResponse 
-                            },
-                            Err(CallFailure::UnlikePostFailure { reason }) => {
-                                match reason {
-                                    UnlikePostFailureReason::PostWasNotLiked => {
-                                        // TODO: add rollback
-                                        env::panic_str("UnlikePostFailureReason::PostWasNotLiked");
-                                    },
-                                }
-                            },
-                            _ => env::panic_str("todo")
+                            Ok(_) => CallResponse::UnlikePostResponse,
+                            Err(UnlikePostFailure::PostIsNotFound) => env::panic_str("UnlikePostFailure::PostIsNotFound"),
+                            Err(UnlikePostFailure::PostIsNotLikedYet) => env::panic_str("UnlikePostFailure::PostIsNotLikedYet")
                         }
                     },
                     Call::LikeMessage { msg_id } => {
                         match self.execute_like_message_call(msg_id.into()) {
-                            Ok(CallSuccess::LikeMessageSuccess) => {
-                                CallResponse::LikeMessageResponse 
-                            },
-                            Err(CallFailure::LikeMessageFailure { reason }) => {
-                                match reason {
-                                    LikeMessageFailureReason::MessageWasLiked => {
-                                        // TODO: add rollback
-                                        env::panic_str("LikeMessageFailureReason::MessageWasLiked");
-                                    },
-                                }
-                            },
-                            _ => env::panic_str("todo")
+                            Ok(_) => CallResponse::LikeMessageResponse,
+                            Err(LikeMessageFailure::PostIsNotFound) => env::panic_str("LikeMessageFailure::PostIsNotFound"),
+                            Err(LikeMessageFailure::MessageIsNotFound) => env::panic_str("LikeMessageFailure::MessageIsNotFound"),
+                            Err(LikeMessageFailure::MessageIsLikedAlready) => env::panic_str("LikeMessageFailure::MessageIsLikedAlready")
                         }
                     },
                     Call::UnlikeMessage { msg_id } => {
                         match self.execute_unlike_message_call(msg_id.into()) {
-                            Ok(CallSuccess::UnlikeMessageSuccess) => {
-                                CallResponse::UnlikeMessageResponse 
-                            },
-                            Err(CallFailure::UnlikeMessageFailure { reason }) => {
-                                match reason {
-                                    UnlikeMessageFailureReason::MessageWasNotLiked => {
-                                        // TODO: add rollback
-                                        env::panic_str("UnlikeMessageFailureReason::MessageWasNotLiked");
-                                    },
-                                }
-                            },
-                            _ => env::panic_str("todo")
+                            Ok(_) => CallResponse::UnlikeMessageResponse,
+                            Err(UnlikeMessageFailure::PostIsNotFound) => env::panic_str("UnlikeMessageFailure::PostIsNotFound"),
+                            Err(UnlikeMessageFailure::MessageIsNotFound) => env::panic_str("UnlikeMessageFailure::MessageIsNotFound"),
+                            Err(UnlikeMessageFailure::MessageIsNotLikedYet) => env::panic_str("UnlikeMessageFailure::MessageIsNotLikedYet")
                         }
                     },
                 }
