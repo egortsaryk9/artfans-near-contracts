@@ -520,7 +520,8 @@ impl Contract {
                             Err(CallFailure::AddMessageFailure) => {
                                  // TODO: add rollback
                                  env::panic_str("AddMessageFailure");
-                            }
+                            },
+                            _ => env::panic_str("todo")
                         }
                     },
                     Call::LikePost { post_id } => {
@@ -535,7 +536,8 @@ impl Contract {
                                         env::panic_str("LikePostFailureReason::PostWasLiked");
                                     },
                                 }
-                            }
+                            },
+                            _ => env::panic_str("todo")
                         }
                     },
                     Call::UnlikePost { post_id } => {
@@ -550,7 +552,8 @@ impl Contract {
                                         env::panic_str("UnlikePostFailureReason::PostWasNotLiked");
                                     },
                                 }
-                            }
+                            },
+                            _ => env::panic_str("todo")
                         }
                     },
                     Call::LikeMessage { msg_id } => {
@@ -565,7 +568,8 @@ impl Contract {
                                         env::panic_str("LikeMessageFailureReason::MessageWasLiked");
                                     },
                                 }
-                            }
+                            },
+                            _ => env::panic_str("todo")
                         }
                     },
                     Call::UnlikeMessage { msg_id } => {
@@ -580,7 +584,8 @@ impl Contract {
                                         env::panic_str("UnlikeMessageFailureReason::MessageWasNotLiked");
                                     },
                                 }
-                            }
+                            },
+                            _ => env::panic_str("todo")
                         }
                     },
                 }
