@@ -15,6 +15,7 @@ pub use crate::external::*;
 pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
+    settings: Settings,
     posts: LookupMap<PostId, Post>,
     accounts_stats: LookupMap<AccountId, AccountStats>,
     accounts_friends: LookupMap<AccountId, UnorderedSet<AccountId>>
@@ -56,6 +57,7 @@ pub struct Message {
     account: AccountId,
     parent_idx: Option<u64>,
     payload: MessagePayload,
+    timestamp: u64,
     likes: UnorderedSet<AccountId>
 }
 
@@ -68,6 +70,12 @@ pub struct AccountStats {
 pub enum AccountLike {
     PostLike { post_id: PostId },
     MessageLike { msg_id: MessageId }
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct Settings {
+    account_recent_likes_limit: u16
 }
 
 impl PartialEq for AccountLike {
@@ -167,6 +175,7 @@ pub struct MessageDTO {
     parent_idx: Option<U64>,
     account: AccountId,
     text: Option<String>,
+    timestamp: U64,
     likes_count: U64
 }
 
@@ -174,13 +183,14 @@ pub struct MessageDTO {
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new(owner: AccountId, fee_ft: AccountId) -> Self {
+    pub fn new(owner: AccountId, fee_ft: AccountId, settings: Settings) -> Self {
         if env::state_exists() == true {
             env::panic_str("Already initialized");
         }
         Self {
             owner,
             fee_ft,
+            settings,
             posts: LookupMap::new(StorageKeys::Posts),
             accounts_stats: LookupMap::new(StorageKeys::AccountsStats),
             accounts_friends: LookupMap::new(StorageKeys::AccountsFriends)
@@ -222,6 +232,11 @@ impl Contract {
         self.collect_fee_and_execute_call(Call::UnlikeMessage { msg_id })
     }
 
+    pub fn update_settings(&mut self, settings: Settings) {
+        self.assert_owner();
+        self.settings = settings;
+    }
+
     pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<MessageDTO> {
         if let Some(post) = self.posts.get(&post_id) {
             let from = u64::from(from_index);
@@ -239,6 +254,7 @@ impl Contract {
                                 },
                                 account: msg.account,
                                 text: Some(text),
+                                timestamp: U64(msg.timestamp),
                                 likes_count: U64(msg.likes.len())
                             }
                         }
@@ -264,6 +280,7 @@ impl Contract {
                             },
                             account: msg.account,
                             text: Some(text),
+                            timestamp: U64(msg.timestamp),
                             likes_count: U64(msg.likes.len())
                         })
                     }
@@ -555,6 +572,7 @@ impl Contract {
             account: account_id,
             parent_idx: None,
             payload: MessagePayload::Text { text },
+            timestamp: env::block_timestamp(),
             likes: UnorderedSet::new(
                 StorageKeys::MessageLikes { 
                     post_id: env::sha256(post_id.as_bytes()),
@@ -578,6 +596,7 @@ impl Contract {
             account: account_id,
             parent_idx: Some(parent_msg_id.msg_idx),
             payload: MessagePayload::Text { text },
+            timestamp: env::block_timestamp(),
             likes: UnorderedSet::new(
                 StorageKeys::MessageLikes {
                     post_id: env::sha256(parent_msg_id.post_id.as_bytes()),
@@ -732,5 +751,29 @@ impl Contract {
             },
             _ => env::panic_str("Fee was not charged"),
         }
+    }
+}
+
+pub trait Ownable {
+    fn assert_owner(&self) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.get_owner(),
+            "This operation is restricted to the contract owner."
+        );
+    }
+    fn get_owner(&self) -> AccountId;
+    fn set_owner(&mut self, owner: AccountId);
+}
+
+#[near_bindgen]
+impl Ownable for Contract {
+    fn get_owner(&self) -> AccountId {
+        self.owner.clone()
+    }
+
+    fn set_owner(&mut self, owner: AccountId) {
+        self.assert_owner();
+        self.owner = owner;
     }
 }
