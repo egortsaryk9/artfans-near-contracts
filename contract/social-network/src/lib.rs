@@ -90,19 +90,19 @@ pub struct AccountStats {
 #[serde(crate = "near_sdk::serde")]
 pub enum Call {
     AddMessageToPost { post_id: PostId, text: String },
-    AddMessageToMessage { parent_msg_id: ExtMessageId, text: String },
+    AddMessageToMessage { parent_msg_id: MessageID, text: String },
     AddFriend { friend_id: AccountId },
     LikePost { post_id: PostId },
     UnlikePost { post_id: PostId },
-    LikeMessage { msg_id: ExtMessageId },
-    UnlikeMessage { msg_id: ExtMessageId },
+    LikeMessage { msg_id: MessageID },
+    UnlikeMessage { msg_id: MessageID },
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum CallResult {
-    MessageToPostAdded { id: ExtMessageId },
-    MessageToMessageAdded { id: ExtMessageId },
+    MessageToPostAdded { id: MessageID },
+    MessageToMessageAdded { id: MessageID },
     FriendAdded,
     PostLiked,
     PostUnliked,
@@ -145,14 +145,14 @@ pub enum UnlikeMessageFailure {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct ExtMessageId {
+pub struct MessageID {
     post_id: PostId,
     msg_idx: U64
 }
 
-impl From<ExtMessageId> for MessageId {
-    fn from(v: ExtMessageId) -> Self {
-        MessageId { 
+impl From<MessageID> for MessageId {
+    fn from(v: MessageID) -> Self {
+        MessageId {
             post_id: v.post_id, 
             msg_idx: u64::from(v.msg_idx) 
         }
@@ -191,7 +191,7 @@ impl Contract {
         self.collect_fee_and_execute_call(Call::AddMessageToPost { post_id, text })
     }
 
-    pub fn add_message_to_message(&mut self, parent_msg_id: ExtMessageId, text: String) -> Promise {
+    pub fn add_message_to_message(&mut self, parent_msg_id: MessageID, text: String) -> Promise {
         self.assert_add_message_to_message_call(&parent_msg_id, &text);
         self.collect_fee_and_execute_call(Call::AddMessageToMessage { parent_msg_id, text })
     }
@@ -211,12 +211,12 @@ impl Contract {
         self.collect_fee_and_execute_call(Call::UnlikePost { post_id })
     }
 
-    pub fn like_message(&mut self, msg_id: ExtMessageId) -> Promise {
+    pub fn like_message(&mut self, msg_id: MessageID) -> Promise {
         self.assert_like_message_call(&msg_id);
         self.collect_fee_and_execute_call(Call::LikeMessage { msg_id })
     }
 
-    pub fn unlike_message(&mut self, msg_id: ExtMessageId) -> Promise {
+    pub fn unlike_message(&mut self, msg_id: MessageID) -> Promise {
         self.assert_unlike_message_call(&msg_id);
         self.collect_fee_and_execute_call(Call::UnlikeMessage { msg_id })
     }
@@ -266,7 +266,7 @@ impl Contract {
         }
     }
 
-    pub fn get_message_likes(&self, msg_id: ExtMessageId, from_index: U64, limit: U64) -> Vec<AccountId> {
+    pub fn get_message_likes(&self, msg_id: MessageID, from_index: U64, limit: U64) -> Vec<AccountId> {
         if let Some(post) = self.posts.get(&msg_id.post_id) {
             let idx = u64::from(msg_id.msg_idx);
             if let Some(msg) = post.messages.get(idx) {
@@ -352,7 +352,7 @@ impl Contract {
         self.assert_post_id(post_id);
     }
 
-    fn assert_add_message_to_message_call(&self, parent_msg_id: &ExtMessageId, text: &String) {
+    fn assert_add_message_to_message_call(&self, parent_msg_id: &MessageID, text: &String) {
         // TODO: validate 'text' format and length
         if text.trim().is_empty() {
             env::panic_str("'text' is empty or whitespace");
@@ -411,7 +411,7 @@ impl Contract {
         }
     }
 
-    fn assert_like_message_call(&self, msg_id: &ExtMessageId) {
+    fn assert_like_message_call(&self, msg_id: &MessageID) {
         let account_id = env::signer_account_id();
         
         self.assert_message_id(msg_id);
@@ -432,7 +432,7 @@ impl Contract {
         }
     }
 
-    fn assert_unlike_message_call(&self, msg_id: &ExtMessageId) {
+    fn assert_unlike_message_call(&self, msg_id: &MessageID) {
         let account_id = env::signer_account_id();
         self.assert_message_id(msg_id);
 
@@ -459,7 +459,7 @@ impl Contract {
         }
     }
 
-    fn assert_message_id(&self, msg_id: &ExtMessageId) {
+    fn assert_message_id(&self, msg_id: &MessageID) {
         let post_id = &msg_id.post_id;
         self.assert_post_id(post_id);
     }
@@ -675,11 +675,11 @@ impl Contract {
                 match call {
                     Call::AddMessageToPost { post_id, text } => {
                         let (post_id, msg_idx) = self.execute_add_message_to_post_call(post_id, text);
-                        CallResult::MessageToPostAdded { id: ExtMessageId { post_id, msg_idx } }
+                        CallResult::MessageToPostAdded { id: MessageID { post_id, msg_idx } }
                     },
                     Call::AddMessageToMessage { parent_msg_id, text } => {
                         let (post_id, msg_idx) = self.execute_add_message_to_message_call(parent_msg_id.into(), text);
-                        CallResult::MessageToMessageAdded { id: ExtMessageId { post_id, msg_idx } }
+                        CallResult::MessageToMessageAdded { id: MessageID { post_id, msg_idx } }
                     },
                     Call::AddFriend { friend_id } => {
                         self.execute_add_friend_call(friend_id);
