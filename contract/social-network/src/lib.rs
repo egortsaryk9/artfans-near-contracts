@@ -9,7 +9,6 @@ use std::convert::From;
 pub mod external;
 pub use crate::external::*;
 
-type PostId = String;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -33,6 +32,8 @@ pub enum StorageKeys {
     AccountFriends { account_id: Vec<u8> },
 }
 
+type PostId = String;
+
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct MessageId {
     post_id: PostId,
@@ -48,6 +49,19 @@ pub struct Post {
 #[derive(BorshDeserialize, BorshSerialize)]
 pub enum MessagePayload {
     Text { text: String }
+}
+
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct Message {
+    account: AccountId,
+    parent_idx: Option<u64>,
+    payload: MessagePayload,
+    likes: UnorderedSet<AccountId>
+}
+
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct AccountStats {
+    recent_likes: UnorderedSet<AccountLike>
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -72,19 +86,6 @@ impl PartialEq for AccountLike {
 }
 
 impl Eq for AccountLike {}
-
-#[derive(BorshDeserialize, BorshSerialize)]
-pub struct Message {
-    account: AccountId,
-    parent_idx: Option<u64>,
-    payload: MessagePayload,
-    likes: UnorderedSet<AccountId>
-}
-
-#[derive(BorshDeserialize, BorshSerialize)]
-pub struct AccountStats {
-    recent_likes: UnorderedSet<AccountLike>
-}
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
