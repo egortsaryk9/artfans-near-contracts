@@ -238,27 +238,37 @@ impl Contract {
         }
     }
 
-    pub fn get_post_likes(&self, post_id: PostId, from_index: usize, limit: usize) -> Vec<AccountId> {
+    pub fn get_post_likes(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<AccountId> {
         if let Some(post) = self.posts.get(&post_id) {
-            post.likes
-                .iter()
-                .skip(from_index)
-                .take(limit)
-                .collect()
+            use std::convert::TryFrom;
+            if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
+                post.likes
+                    .iter()
+                    .skip(from)
+                    .take(lim)
+                    .collect()
+            } else {
+                env::panic_str("'usize' conversion failed");
+            }
         } else {
           Vec::new()
         }
     }
 
-    pub fn get_message_likes(&self, msg_id: ExtMessageId, from_index: usize, limit: usize) -> Vec<AccountId> {
+    pub fn get_message_likes(&self, msg_id: ExtMessageId, from_index: U64, limit: U64) -> Vec<AccountId> {
         if let Some(post) = self.posts.get(&msg_id.post_id) {
             let idx = u64::from(msg_id.msg_idx);
             if let Some(msg) = post.messages.get(idx) {
-                msg.likes
-                    .iter()
-                    .skip(from_index)
-                    .take(limit)
-                    .collect()
+                use std::convert::TryFrom;
+                if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
+                    msg.likes
+                        .iter()
+                        .skip(from)
+                        .take(lim)
+                        .collect()
+                } else {
+                    env::panic_str("'usize' conversion failed");
+                }
             } else {
                 Vec::new()
             }
@@ -267,23 +277,28 @@ impl Contract {
         }
     }
     
-    pub fn get_account_last_likes(&self, account_id: AccountId, from_index: usize, limit: usize) -> Vec<(PostId, Option<U64>)> {
+    pub fn get_account_last_likes(&self, account_id: AccountId, from_index: U64, limit: U64) -> Vec<(PostId, Option<U64>)> {
         if let Some(account_stats) = self.account_stats.get(&account_id) {
-            account_stats.recent_likes
-                .iter()
-                .skip(from_index)
-                .take(limit)
-                .map(|item| {
-                    match item {
-                        AccountLike::PostLike { post_id } => {
-                            (post_id, None)
-                        },
-                        AccountLike::MessageLike { msg_id } => {
-                            (msg_id.post_id, Some(U64(msg_id.msg_idx)))
+            use std::convert::TryFrom;
+            if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
+                account_stats.recent_likes
+                    .iter()
+                    .skip(from)
+                    .take(lim)
+                    .map(|item| {
+                        match item {
+                            AccountLike::PostLike { post_id } => {
+                                (post_id, None)
+                            },
+                            AccountLike::MessageLike { msg_id } => {
+                                (msg_id.post_id, Some(U64(msg_id.msg_idx)))
+                            }
                         }
-                    }
-                })
-                .collect()
+                    })
+                    .collect()
+            } else {
+                env::panic_str("'usize' conversion failed");
+            }
         } else {
           Vec::new()
         }
