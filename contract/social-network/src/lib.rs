@@ -73,6 +73,7 @@ impl Eq for AccountLike {}
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Message {
     account: AccountId,
+    parent_idx: Option<u64>,
     payload: MessagePayload,
     likes: UnorderedSet<AccountId>
 }
@@ -85,7 +86,8 @@ pub struct AccountStats {
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum Call {
-    AddMessage { post_id: PostId, text: String },
+    AddMessageToPost { post_id: PostId, text: String },
+    AddMessageToMessage { parent_msg_id: ExtMessageId, text: String },
     LikePost { post_id: PostId },
     UnlikePost { post_id: PostId },
     LikeMessage { msg_id: ExtMessageId },
@@ -95,13 +97,12 @@ pub enum Call {
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub enum CallResult {
-    MessageAdded { id: ExtMessageId },
+    MessageToPostAdded { id: ExtMessageId },
+    MessageToMessageAdded { id: ExtMessageId },
     PostLiked,
     PostUnliked,
     MessageLiked,
-    MessageUnliked,
-
-    AbortedAndRefund
+    MessageUnliked
 }
 
 #[derive(Serialize, Deserialize)]
@@ -157,9 +158,10 @@ impl From<ExtMessageId> for MessageId {
 #[serde(crate = "near_sdk::serde")]
 pub struct MessageDTO {
     msg_idx: U64,
+    parent_idx: Option<U64>,
     account: AccountId,
     text: Option<String>,
-    likes_count: u64
+    likes_count: U64
 }
 
 
@@ -178,9 +180,14 @@ impl Contract {
         }
     }
 
-    pub fn add_message(&mut self, post_id: PostId, text: String) -> Promise {
-        self.assert_add_message_call(&post_id, &text);
-        self.collect_fee_and_execute_call(Call::AddMessage { post_id, text })
+    pub fn add_message_to_post(&mut self, post_id: PostId, text: String) -> Promise {
+        self.assert_add_message_to_post_call(&post_id, &text);
+        self.collect_fee_and_execute_call(Call::AddMessageToPost { post_id, text })
+    }
+
+    pub fn add_message_to_message(&mut self, parent_msg_id: ExtMessageId, text: String) -> Promise {
+        self.assert_add_message_to_message_call(&parent_msg_id, &text);
+        self.collect_fee_and_execute_call(Call::AddMessageToMessage { parent_msg_id, text })
     }
 
     pub fn like_post(&mut self, post_id: PostId) -> Promise {
@@ -214,9 +221,13 @@ impl Contract {
                         MessagePayload::Text { text } => {
                             MessageDTO {
                                 msg_idx: U64(idx),
+                                parent_idx: match message.parent_idx {
+                                    Some(parent_idx) => Some(U64(parent_idx)),
+                                    None => None
+                                },
                                 account: message.account,
                                 text: Some(text),
-                                likes_count: message.likes.len()
+                                likes_count: U64(message.likes.len())
                             }
                         }
                     }
@@ -287,12 +298,32 @@ impl Contract {
 
     // Assert incoming action
 
-    fn assert_add_message_call(&self, post_id: &PostId, text: &String) {
-        self.assert_post_id(post_id);
-
+    fn assert_add_message_to_post_call(&self, post_id: &PostId, text: &String) {
         // TODO: validate 'text' format and length
         if text.trim().is_empty() {
             env::panic_str("'text' is empty or whitespace");
+        }
+
+        self.assert_post_id(post_id);
+    }
+
+    fn assert_add_message_to_message_call(&self, parent_msg_id: &ExtMessageId, text: &String) {
+        // TODO: validate 'text' format and length
+        if text.trim().is_empty() {
+            env::panic_str("'text' is empty or whitespace");
+        }
+
+        self.assert_message_id(parent_msg_id);
+
+        let post_id = &parent_msg_id.post_id;
+        let msg_idx: u64 = parent_msg_id.msg_idx.into();
+        
+        if let Some(post) = self.posts.get(post_id) {
+            if !post.messages.get(msg_idx).is_some() {
+                env::panic_str("Parent message does not exist");
+            }
+        } else {
+            env::panic_str("Post does not exist");
         }
     }
 
@@ -305,7 +336,7 @@ impl Contract {
             if post.likes.contains(&account_id) {
                 env::panic_str("Post is liked already");
             }
-        } 
+        }
         // else {
         //     env::panic_str("Post does not exist");
         // }
@@ -414,9 +445,10 @@ impl Contract {
         account_stat
     }
     
+    
     // Execute call logic
 
-    fn execute_add_message_call(&mut self, post_id: PostId, text: String) -> (PostId, U64) {
+    fn execute_add_message_to_post_call(&mut self, post_id: PostId, text: String) -> (PostId, U64) {
         let account = env::signer_account_id();
         
         let mut post = self.posts.get(&post_id).unwrap_or_else(|| {
@@ -426,6 +458,7 @@ impl Contract {
         let msg_idx = post.messages.len();
         let msg = Message {
             account,
+            parent_idx: None,
             payload: MessagePayload::Text { text },
             likes: UnorderedSet::new(
                 StorageKeys::MessageLikes { 
@@ -438,6 +471,29 @@ impl Contract {
         self.posts.insert(&post_id, &post);
 
         (post_id, U64(msg_idx))
+    }
+
+    fn execute_add_message_to_message_call(&mut self, parent_msg_id: MessageId, text: String) -> (PostId, U64) {
+        let account = env::signer_account_id();
+        
+        let mut post = self.posts.get(&parent_msg_id.post_id).expect("Post is not found");
+        
+        let msg_idx = post.messages.len();
+        let msg = Message {
+            account,
+            parent_idx: Some(parent_msg_id.msg_idx),
+            payload: MessagePayload::Text { text },
+            likes: UnorderedSet::new(
+                StorageKeys::MessageLikes {
+                    post_id: env::sha256(parent_msg_id.post_id.as_bytes()),
+                    msg_idx: msg_idx 
+                }
+            )
+        };
+        post.messages.push(&msg);
+        self.posts.insert(&parent_msg_id.post_id, &post);
+
+        (parent_msg_id.post_id, U64(msg_idx))
     }
 
     fn execute_like_post_call(&mut self, post_id: PostId) {
@@ -530,7 +586,7 @@ impl Contract {
 
     #[private]
     pub fn on_fee_collected(&mut self, call: Call) -> CallResult {
-        
+
         if env::promise_results_count() != 1 {
             env::panic_str("Unexpected promise results count");
         }
@@ -538,9 +594,13 @@ impl Contract {
         match env::promise_result(0) {
             PromiseResult::Successful(_) => {
                 match call {
-                    Call::AddMessage { post_id, text } => {
-                        let (post_id, msg_idx) = self.execute_add_message_call(post_id, text);
-                        CallResult::MessageAdded { id: ExtMessageId { post_id, msg_idx } }
+                    Call::AddMessageToPost { post_id, text } => {
+                        let (post_id, msg_idx) = self.execute_add_message_to_post_call(post_id, text);
+                        CallResult::MessageToPostAdded { id: ExtMessageId { post_id, msg_idx } }
+                    },
+                    Call::AddMessageToMessage { parent_msg_id, text } => {
+                        let (post_id, msg_idx) = self.execute_add_message_to_message_call(parent_msg_id.into(), text);
+                        CallResult::MessageToMessageAdded { id: ExtMessageId { post_id, msg_idx } }
                     },
                     Call::LikePost { post_id } => {
                         self.execute_like_post_call(post_id);
