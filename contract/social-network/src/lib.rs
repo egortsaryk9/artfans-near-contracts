@@ -228,25 +228,51 @@ impl Contract {
             let lim = u64::from(limit);
             (from..std::cmp::min(from + lim, post.messages.len()))
                 .map(|idx| {
-                    let message = post.messages.get(idx).unwrap();
-                    match message.payload {
+                    let msg = post.messages.get(idx).unwrap();
+                    match msg.payload {
                         MessagePayload::Text { text } => {
                             MessageDTO {
                                 msg_idx: U64(idx),
-                                parent_idx: match message.parent_idx {
+                                parent_idx: match msg.parent_idx {
                                     Some(parent_idx) => Some(U64(parent_idx)),
                                     None => None
                                 },
-                                account: message.account,
+                                account: msg.account,
                                 text: Some(text),
-                                likes_count: U64(message.likes.len())
+                                likes_count: U64(msg.likes.len())
                             }
                         }
                     }
                 })
                 .collect()
         } else {
-          Vec::new()
+            env::panic_str("Post is not found");
+        }
+    }
+
+    pub fn get_post_message(&self, msg_id: MessageID) -> Option<MessageDTO> {
+        if let Some(post) = self.posts.get(&msg_id.post_id) {
+            let idx = u64::from(msg_id.msg_idx);
+            if let Some(msg) = post.messages.get(idx) {
+                match msg.payload {
+                    MessagePayload::Text { text } => {
+                        Some(MessageDTO {
+                            msg_idx: U64(idx),
+                            parent_idx: match msg.parent_idx {
+                                Some(parent_idx) => Some(U64(parent_idx)),
+                                None => None
+                            },
+                            account: msg.account,
+                            text: Some(text),
+                            likes_count: U64(msg.likes.len())
+                        })
+                    }
+                }
+            } else {
+                env::panic_str("Message is not found");
+            }
+        } else {
+            env::panic_str("Post is not found");
         }
     }
 
@@ -263,7 +289,7 @@ impl Contract {
                 env::panic_str("'usize' conversion failed");
             }
         } else {
-          Vec::new()
+            env::panic_str("Post is not found");
         }
     }
 
@@ -282,10 +308,10 @@ impl Contract {
                     env::panic_str("'usize' conversion failed");
                 }
             } else {
-                Vec::new()
+                env::panic_str("Message is not found");
             }
         } else {
-          Vec::new()
+            env::panic_str("Post is not found");
         }
     }
     
@@ -312,7 +338,7 @@ impl Contract {
                 env::panic_str("'usize' conversion failed");
             }
         } else {
-          Vec::new()
+            Vec::new()
         }
     }
 
@@ -329,18 +355,17 @@ impl Contract {
                 env::panic_str("'usize' conversion failed");
             }
         } else {
-          Vec::new()
+            Vec::new()
         }
     }
 
 }
 
 
-// Private functions
+// Private methods
+
 #[near_bindgen]
 impl Contract {
-
-
 
     // Assert incoming call
 
