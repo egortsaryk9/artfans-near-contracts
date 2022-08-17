@@ -17,7 +17,8 @@ pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
     posts: LookupMap<PostId, Post>,
-    account_stats: LookupMap<AccountId, AccountStats>
+    accounts_stats: LookupMap<AccountId, AccountStats>,
+    accounts_friends: LookupMap<AccountId, UnorderedSet<AccountId>>
 }
 
 #[derive(BorshStorageKey, BorshSerialize)]
@@ -27,7 +28,9 @@ pub enum StorageKeys {
     PostLikes { post_id: Vec<u8> },
     MessageLikes { post_id: Vec<u8>, msg_idx: u64 },
     AccountsStats,
-    AccountRecentLikes { account_id: Vec<u8> }
+    AccountRecentLikes { account_id: Vec<u8> },
+    AccountsFriends,
+    AccountFriends { account_id: Vec<u8> },
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -88,6 +91,7 @@ pub struct AccountStats {
 pub enum Call {
     AddMessageToPost { post_id: PostId, text: String },
     AddMessageToMessage { parent_msg_id: ExtMessageId, text: String },
+    AddFriend { friend_id: AccountId },
     LikePost { post_id: PostId },
     UnlikePost { post_id: PostId },
     LikeMessage { msg_id: ExtMessageId },
@@ -99,6 +103,7 @@ pub enum Call {
 pub enum CallResult {
     MessageToPostAdded { id: ExtMessageId },
     MessageToMessageAdded { id: ExtMessageId },
+    FriendAdded,
     PostLiked,
     PostUnliked,
     MessageLiked,
@@ -176,7 +181,8 @@ impl Contract {
             owner,
             fee_ft,
             posts: LookupMap::new(StorageKeys::Posts),
-            account_stats: LookupMap::new(StorageKeys::AccountsStats),
+            accounts_stats: LookupMap::new(StorageKeys::AccountsStats),
+            accounts_friends: LookupMap::new(StorageKeys::AccountsFriends)
         }
     }
 
@@ -193,6 +199,11 @@ impl Contract {
     pub fn like_post(&mut self, post_id: PostId) -> Promise {
         self.assert_like_post_call(&post_id);
         self.collect_fee_and_execute_call(Call::LikePost { post_id })
+    }
+
+    pub fn add_friend(&mut self, friend_id: AccountId) -> Promise {
+        self.assert_add_friend_call(&friend_id);
+        self.collect_fee_and_execute_call(Call::AddFriend { friend_id })
     }
 
     pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
@@ -278,10 +289,10 @@ impl Contract {
     }
     
     pub fn get_account_last_likes(&self, account_id: AccountId, from_index: U64, limit: U64) -> Vec<(PostId, Option<U64>)> {
-        if let Some(account_stats) = self.account_stats.get(&account_id) {
+        if let Some(accounts_stats) = self.accounts_stats.get(&account_id) {
             use std::convert::TryFrom;
             if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
-                account_stats.recent_likes
+                accounts_stats.recent_likes
                     .iter()
                     .skip(from)
                     .take(lim)
@@ -303,6 +314,24 @@ impl Contract {
           Vec::new()
         }
     }
+
+    pub fn get_account_friends(&self, account_id: AccountId, from_index: U64, limit: U64) -> Vec<AccountId> {
+        if let Some(account_friends) = self.accounts_friends.get(&account_id) {
+            use std::convert::TryFrom;
+            if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
+                account_friends
+                    .iter()
+                    .skip(from)
+                    .take(lim)
+                    .collect()
+            } else {
+                env::panic_str("'usize' conversion failed");
+            }
+        } else {
+          Vec::new()
+        }
+    }
+
 }
 
 
@@ -311,7 +340,8 @@ impl Contract {
 impl Contract {
 
 
-    // Assert incoming action
+
+    // Assert incoming call
 
     fn assert_add_message_to_post_call(&self, post_id: &PostId, text: &String) {
         // TODO: validate 'text' format and length
@@ -339,6 +369,16 @@ impl Contract {
             }
         } else {
             env::panic_str("Post does not exist");
+        }
+    }
+
+    fn assert_add_friend_call(&self, friend_id: &AccountId) {
+        let account_id = env::signer_account_id();
+
+        if let Some(account_friends) = self.accounts_friends.get(&account_id) {
+            if account_friends.contains(friend_id) {
+                env::panic_str("Friend is added already");
+            }
         }
     }
 
@@ -425,6 +465,7 @@ impl Contract {
     }
 
 
+
     // Add storage collections
 
     fn add_post_storage(&mut self, post_id: &PostId) -> Post {
@@ -455,16 +496,29 @@ impl Contract {
             )
         };
 
-        self.account_stats.insert(account_id, &account_stat);
+        self.accounts_stats.insert(account_id, &account_stat);
 
         account_stat
     }
+    
+    fn add_account_friends_storage(&mut self, account_id: &AccountId) -> UnorderedSet<AccountId> {
+       let account_friends = UnorderedSet::new(
+            StorageKeys::AccountFriends { 
+                account_id: env::sha256(account_id.as_bytes()) 
+            }
+        );
+
+        self.accounts_friends.insert(account_id, &account_friends);
+
+        account_friends
+    }
+    
     
     
     // Execute call logic
 
     fn execute_add_message_to_post_call(&mut self, post_id: PostId, text: String) -> (PostId, U64) {
-        let account = env::signer_account_id();
+        let account_id = env::signer_account_id();
         
         let mut post = self.posts.get(&post_id).unwrap_or_else(|| {
             self.add_post_storage(&post_id)
@@ -472,7 +526,7 @@ impl Contract {
         
         let msg_idx = post.messages.len();
         let msg = Message {
-            account,
+            account: account_id,
             parent_idx: None,
             payload: MessagePayload::Text { text },
             likes: UnorderedSet::new(
@@ -489,13 +543,13 @@ impl Contract {
     }
 
     fn execute_add_message_to_message_call(&mut self, parent_msg_id: MessageId, text: String) -> (PostId, U64) {
-        let account = env::signer_account_id();
+        let account_id = env::signer_account_id();
         
         let mut post = self.posts.get(&parent_msg_id.post_id).expect("Post is not found");
         
         let msg_idx = post.messages.len();
         let msg = Message {
-            account,
+            account: account_id,
             parent_idx: Some(parent_msg_id.msg_idx),
             payload: MessagePayload::Text { text },
             likes: UnorderedSet::new(
@@ -511,6 +565,16 @@ impl Contract {
         (parent_msg_id.post_id, U64(msg_idx))
     }
 
+    fn execute_add_friend_call(&mut self, friend_id: AccountId) {
+        let account_id = env::signer_account_id();
+
+        let mut account_friends = self.accounts_friends.get(&account_id).unwrap_or_else(|| {
+            self.add_account_friends_storage(&account_id)
+        });
+
+        account_friends.insert(&friend_id);
+    }
+    
     fn execute_like_post_call(&mut self, post_id: PostId) {
         let account_id = env::signer_account_id();
 
@@ -522,12 +586,12 @@ impl Contract {
         self.posts.insert(&post_id, &post);
 
         // Update account stats
-        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+        let mut accounts_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
             self.add_account_stat_storage(&account_id)
         });
         let like = AccountLike::PostLike { post_id };
-        account_stats.recent_likes.insert(&like);
-        self.account_stats.insert(&account_id, &account_stats);
+        accounts_stats.recent_likes.insert(&like);
+        self.accounts_stats.insert(&account_id, &accounts_stats);
     }
 
     fn execute_unlike_post_call(&mut self, post_id: PostId) {
@@ -539,12 +603,12 @@ impl Contract {
         self.posts.insert(&post_id, &post);
 
         // Update account stats
-        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+        let mut accounts_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
             self.add_account_stat_storage(&account_id)
         });
         let like = AccountLike::PostLike { post_id };
-        account_stats.recent_likes.remove(&like);
-        self.account_stats.insert(&account_id, &account_stats);
+        accounts_stats.recent_likes.remove(&like);
+        self.accounts_stats.insert(&account_id, &accounts_stats);
     }
 
     fn execute_like_message_call(&mut self, msg_id: MessageId) {
@@ -558,12 +622,12 @@ impl Contract {
         self.posts.insert(&msg_id.post_id, &post);
 
         // Update account stats
-        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+        let mut accounts_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
             self.add_account_stat_storage(&account_id)
         });
         let like = AccountLike::MessageLike { msg_id };
-        account_stats.recent_likes.insert(&like);
-        self.account_stats.insert(&account_id, &account_stats);
+        accounts_stats.recent_likes.insert(&like);
+        self.accounts_stats.insert(&account_id, &accounts_stats);
     }
 
     fn execute_unlike_message_call(&mut self, msg_id: MessageId) {
@@ -577,13 +641,13 @@ impl Contract {
         self.posts.insert(&msg_id.post_id, &post);
 
         // Update account stats
-        let mut account_stats = self.account_stats.get(&account_id).unwrap_or_else(|| {
+        let mut accounts_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
             self.add_account_stat_storage(&account_id)
         });
 
         let like = AccountLike::MessageLike { msg_id };
-        account_stats.recent_likes.remove(&like);
-        self.account_stats.insert(&account_id, &account_stats);
+        accounts_stats.recent_likes.remove(&like);
+        self.accounts_stats.insert(&account_id, &accounts_stats);
     }
 
 
@@ -616,6 +680,10 @@ impl Contract {
                     Call::AddMessageToMessage { parent_msg_id, text } => {
                         let (post_id, msg_idx) = self.execute_add_message_to_message_call(parent_msg_id.into(), text);
                         CallResult::MessageToMessageAdded { id: ExtMessageId { post_id, msg_idx } }
+                    },
+                    Call::AddFriend { friend_id } => {
+                        self.execute_add_friend_call(friend_id);
+                        CallResult::FriendAdded
                     },
                     Call::LikePost { post_id } => {
                         self.execute_like_post_call(post_id);
