@@ -574,6 +574,7 @@ impl Contract {
         });
 
         account_friends.insert(&friend_id);
+        self.accounts_friends.insert(&account_id, &account_friends);
     }
     
     fn execute_like_post_call(&mut self, post_id: PostId) {
