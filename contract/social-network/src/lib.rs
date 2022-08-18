@@ -1,5 +1,5 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{env, log, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
+use near_sdk::{env, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
 use near_sdk::json_types::{U128, U64};
 use near_sdk::collections::{LookupMap, Vector, UnorderedSet};
 use near_sdk::serde::{Deserialize, Serialize};
@@ -63,7 +63,7 @@ pub struct Message {
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct AccountStats {
-    recent_likes: UnorderedSet<AccountLike>
+    recent_likes: Vec<AccountLike>
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -72,10 +72,10 @@ pub enum AccountLike {
     MessageLike { msg_id: MessageId }
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Settings {
-    account_recent_likes_limit: u16
+    account_recent_likes_limit: u8
 }
 
 impl PartialEq for AccountLike {
@@ -332,28 +332,23 @@ impl Contract {
         }
     }
     
-    pub fn get_account_last_likes(&self, account_id: AccountId, from_index: U64, limit: U64) -> Vec<(PostId, Option<U64>)> {
+    pub fn get_account_last_likes(&self, account_id: AccountId, from_index: u8, limit: u8) -> Vec<(PostId, Option<U64>)> {
         if let Some(accounts_stats) = self.accounts_stats.get(&account_id) {
-            use std::convert::TryFrom;
-            if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
-                accounts_stats.recent_likes
-                    .iter()
-                    .skip(from)
-                    .take(lim)
-                    .map(|item| {
-                        match item {
-                            AccountLike::PostLike { post_id } => {
-                                (post_id, None)
-                            },
-                            AccountLike::MessageLike { msg_id } => {
-                                (msg_id.post_id, Some(U64(msg_id.msg_idx)))
-                            }
+            accounts_stats.recent_likes
+                .into_iter()
+                .skip(usize::from(from_index))
+                .take(usize::from(limit))
+                .map(|item| {
+                    match item {
+                        AccountLike::PostLike { post_id } => {
+                            (post_id, None)
+                        },
+                        AccountLike::MessageLike { msg_id } => {
+                            (msg_id.post_id, Some(U64(msg_id.msg_idx)))
                         }
-                    })
-                    .collect()
-            } else {
-                env::panic_str("'usize' conversion failed");
-            }
+                    }
+                })
+                .collect()
         } else {
             Vec::new()
         }
@@ -374,6 +369,10 @@ impl Contract {
         } else {
             Vec::new()
         }
+    }
+
+    pub fn get_current_settings(&self) -> Settings {
+        self.settings
     }
 
 }
@@ -532,11 +531,7 @@ impl Contract {
 
     fn add_account_stat_storage(&mut self, account_id: &AccountId) -> AccountStats {
         let account_stat = AccountStats {
-            recent_likes: UnorderedSet::new(
-                StorageKeys::AccountRecentLikes { 
-                    account_id: env::sha256(account_id.as_bytes()) 
-                }
-            )
+            recent_likes: Vec::new()
         };
 
         self.accounts_stats.insert(account_id, &account_stat);
@@ -632,12 +627,8 @@ impl Contract {
         self.posts.insert(&post_id, &post);
 
         // Update account stats
-        let mut accounts_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
-            self.add_account_stat_storage(&account_id)
-        });
         let like = AccountLike::PostLike { post_id };
-        accounts_stats.recent_likes.insert(&like);
-        self.accounts_stats.insert(&account_id, &accounts_stats);
+        self.add_like_to_account_likes_stat(account_id, like);
     }
 
     fn execute_unlike_post_call(&mut self, post_id: PostId) {
@@ -649,12 +640,8 @@ impl Contract {
         self.posts.insert(&post_id, &post);
 
         // Update account stats
-        let mut accounts_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
-            self.add_account_stat_storage(&account_id)
-        });
         let like = AccountLike::PostLike { post_id };
-        accounts_stats.recent_likes.remove(&like);
-        self.accounts_stats.insert(&account_id, &accounts_stats);
+        self.remove_like_from_account_likes_stat(account_id, like);
     }
 
     fn execute_like_message_call(&mut self, msg_id: MessageId) {
@@ -668,12 +655,8 @@ impl Contract {
         self.posts.insert(&msg_id.post_id, &post);
 
         // Update account stats
-        let mut accounts_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
-            self.add_account_stat_storage(&account_id)
-        });
         let like = AccountLike::MessageLike { msg_id };
-        accounts_stats.recent_likes.insert(&like);
-        self.accounts_stats.insert(&account_id, &accounts_stats);
+        self.add_like_to_account_likes_stat(account_id, like);
     }
 
     fn execute_unlike_message_call(&mut self, msg_id: MessageId) {
@@ -687,15 +670,55 @@ impl Contract {
         self.posts.insert(&msg_id.post_id, &post);
 
         // Update account stats
-        let mut accounts_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
+        let like = AccountLike::MessageLike { msg_id };
+        self.remove_like_from_account_likes_stat(account_id, like);
+    }
+
+
+    fn add_like_to_account_likes_stat(&mut self, account_id: AccountId, like: AccountLike) {
+        let mut account_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
             self.add_account_stat_storage(&account_id)
         });
 
-        let like = AccountLike::MessageLike { msg_id };
-        accounts_stats.recent_likes.remove(&like);
-        self.accounts_stats.insert(&account_id, &accounts_stats);
+        let account_recent_likes_limit = usize::from(self.settings.account_recent_likes_limit);
+
+        let updated_account_stats = if account_stats.recent_likes.len() > 0 && account_recent_likes_limit == 0 {
+            account_stats.recent_likes.clear();
+            account_stats
+        } else {
+            if account_stats.recent_likes.len() > account_recent_likes_limit {
+                let skip = account_stats.recent_likes.len() - account_recent_likes_limit;
+                account_stats.recent_likes = account_stats.recent_likes.into_iter().skip(skip + 1).collect();
+                account_stats.recent_likes.push(like);
+                account_stats
+            } else if account_stats.recent_likes.len() == account_recent_likes_limit {
+                let skip = 1;
+                account_stats.recent_likes = account_stats.recent_likes.into_iter().skip(skip).collect();
+                account_stats.recent_likes.push(like);
+                account_stats
+            } else {
+                account_stats.recent_likes.push(like);
+                account_stats
+            }
+        };
+
+        self.accounts_stats.insert(&account_id, &updated_account_stats);
     }
 
+    fn remove_like_from_account_likes_stat(&mut self, account_id: AccountId, like: AccountLike) {
+        let mut account_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
+            self.add_account_stat_storage(&account_id)
+        });
+
+        let updated_account_stats = if let Some(idx) = account_stats.recent_likes.iter().position(|l| l == &like) {
+            account_stats.recent_likes.remove(idx);
+            account_stats
+        } else {
+            account_stats
+        };
+
+        self.accounts_stats.insert(&account_id, &updated_account_stats);
+    }
 
     fn collect_fee_and_execute_call(&mut self, call: Call) -> Promise {
         ext_ft::ext(self.fee_ft.clone())
