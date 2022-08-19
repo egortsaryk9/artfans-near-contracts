@@ -1,8 +1,10 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
-use near_sdk::json_types::{U128, U64};
-use near_sdk::collections::{LookupMap, Vector, UnorderedSet};
+use near_sdk::json_types::{U128, U64, Base64VecU8};
+use near_sdk::collections::{LookupMap, Vector, UnorderedSet, LazyOption};
 use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::serde_json;
+use near_sdk::serde_json::{Result, Value};
 use near_sdk::BorshStorageKey;
 use std::convert::From;
 
@@ -17,8 +19,9 @@ pub struct Contract {
     fee_ft: AccountId,
     settings: Settings,
     posts: LookupMap<PostId, Post>,
+    accounts_friends: LookupMap<AccountId, UnorderedSet<AccountId>>,
+    accounts_profiles: LookupMap<AccountId, AccountProfile>,
     accounts_stats: LookupMap<AccountId, AccountStats>,
-    accounts_friends: LookupMap<AccountId, UnorderedSet<AccountId>>
 }
 
 #[derive(BorshStorageKey, BorshSerialize)]
@@ -31,6 +34,8 @@ pub enum StorageKeys {
     AccountRecentLikes { account_id: Vec<u8> },
     AccountsFriends,
     AccountFriends { account_id: Vec<u8> },
+    AccountsProfiles,
+    AccountProfileImage { account_id: Vec<u8> },
 }
 
 type PostId = String;
@@ -72,6 +77,12 @@ pub enum AccountLike {
     MessageLike { msg_id: MessageId }
 }
 
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct AccountProfile {
+    json_metadata: String,
+    image: LazyOption<Vec<u8>>
+}
+
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Settings {
@@ -105,6 +116,7 @@ pub enum Call {
     UnlikePost { post_id: PostId },
     LikeMessage { msg_id: MessageID },
     UnlikeMessage { msg_id: MessageID },
+    UpdateProfile { profile: AccountProfileData }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -116,7 +128,8 @@ pub enum CallResult {
     PostLiked,
     PostUnliked,
     MessageLiked,
-    MessageUnliked
+    MessageUnliked,
+    ProfileUpdated
 }
 
 #[derive(Serialize, Deserialize)]
@@ -170,6 +183,13 @@ impl From<MessageID> for MessageId {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
+pub struct AccountProfileData {
+    json_metadata: Option<String>,
+    image: Option<Base64VecU8>
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct MessageDTO {
     msg_idx: U64,
     parent_idx: Option<U64>,
@@ -192,8 +212,9 @@ impl Contract {
             fee_ft,
             settings,
             posts: LookupMap::new(StorageKeys::Posts),
-            accounts_stats: LookupMap::new(StorageKeys::AccountsStats),
-            accounts_friends: LookupMap::new(StorageKeys::AccountsFriends)
+            accounts_friends: LookupMap::new(StorageKeys::AccountsFriends),
+            accounts_profiles: LookupMap::new(StorageKeys::AccountsProfiles),
+            accounts_stats: LookupMap::new(StorageKeys::AccountsStats)
         }
     }
 
@@ -212,11 +233,6 @@ impl Contract {
         self.collect_fee_and_execute_call(Call::LikePost { post_id })
     }
 
-    pub fn add_friend(&mut self, friend_id: AccountId) -> Promise {
-        self.assert_add_friend_call(&friend_id);
-        self.collect_fee_and_execute_call(Call::AddFriend { friend_id })
-    }
-
     pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
         self.assert_unlike_post_call(&post_id);
         self.collect_fee_and_execute_call(Call::UnlikePost { post_id })
@@ -232,11 +248,21 @@ impl Contract {
         self.collect_fee_and_execute_call(Call::UnlikeMessage { msg_id })
     }
 
+    pub fn add_friend(&mut self, friend_id: AccountId) -> Promise {
+        self.assert_add_friend_call(&friend_id);
+        self.collect_fee_and_execute_call(Call::AddFriend { friend_id })
+    }
+
+    pub fn update_profile(&mut self, profile: AccountProfileData) -> Promise {
+        self.assert_update_profile_call(&profile);
+        self.collect_fee_and_execute_call(Call::UpdateProfile { profile })
+    }
+
     pub fn update_settings(&mut self, settings: Settings) {
         self.assert_owner();
         self.settings = settings;
     }
-
+    
     pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<MessageDTO> {
         if let Some(post) = self.posts.get(&post_id) {
             let from = u64::from(from_index);
@@ -371,10 +397,25 @@ impl Contract {
         }
     }
 
-    pub fn get_current_settings(&self) -> Settings {
-        self.settings
+    pub fn get_profile(&self, account_id: AccountId) -> Option<AccountProfileData> {
+        if let Some(account_profile) = self.accounts_profiles.get(&account_id) {
+            Some(AccountProfileData {
+              json_metadata: Some(account_profile.json_metadata),
+              image: match account_profile.image.get() {
+                  Some(vec) => Some(Base64VecU8::from(vec)),
+                  None => None
+              }
+            })
+        } else {
+            None
+        }
     }
 
+    pub fn get_current_settings(&self) -> Settings {
+        Settings {
+            account_recent_likes_limit: self.settings.account_recent_likes_limit
+        }
+    }
 }
 
 
@@ -389,8 +430,7 @@ impl Contract {
         // TODO: validate 'text' format and length
         if text.trim().is_empty() {
             env::panic_str("'text' is empty or whitespace");
-        }
-
+        };
         self.assert_post_id(post_id);
     }
 
@@ -398,7 +438,7 @@ impl Contract {
         // TODO: validate 'text' format and length
         if text.trim().is_empty() {
             env::panic_str("'text' is empty or whitespace");
-        }
+        };
 
         self.assert_message_id(parent_msg_id);
 
@@ -408,20 +448,10 @@ impl Contract {
         if let Some(post) = self.posts.get(post_id) {
             if !post.messages.get(msg_idx).is_some() {
                 env::panic_str("Parent message does not exist");
-            }
+            };
         } else {
             env::panic_str("Post does not exist");
-        }
-    }
-
-    fn assert_add_friend_call(&self, friend_id: &AccountId) {
-        let account_id = env::signer_account_id();
-
-        if let Some(account_friends) = self.accounts_friends.get(&account_id) {
-            if account_friends.contains(friend_id) {
-                env::panic_str("Friend is added already");
-            }
-        }
+        };
     }
 
     fn assert_like_post_call(&self, post_id: &PostId) {
@@ -432,8 +462,8 @@ impl Contract {
         if let Some(post) = self.posts.get(post_id) {
             if post.likes.contains(&account_id) {
                 env::panic_str("Post is liked already");
-            }
-        }
+            };
+        };
         // else {
         //     env::panic_str("Post does not exist");
         // }
@@ -447,10 +477,10 @@ impl Contract {
         if let Some(post) = self.posts.get(post_id) {
             if !post.likes.contains(&account_id) {
                 env::panic_str("Post is not liked");
-            }
+            };
         } else {
             env::panic_str("Post does not exist");
-        }
+        };
     }
 
     fn assert_like_message_call(&self, msg_id: &MessageID) {
@@ -465,13 +495,13 @@ impl Contract {
             if let Some(msg) = post.messages.get(msg_idx) {
                 if msg.likes.contains(&account_id) {
                     env::panic_str("Message is liked already");
-                }
+                };
             } else {
                 env::panic_str("Message does not exist");
-            }
+            };
         } else {
             env::panic_str("Post does not exist");
-        }
+        };
     }
 
     fn assert_unlike_message_call(&self, msg_id: &MessageID) {
@@ -485,28 +515,45 @@ impl Contract {
             if let Some(msg) = post.messages.get(msg_idx) {
                 if !msg.likes.contains(&account_id) {
                     env::panic_str("Message is not liked");
-                }
+                };
             } else {
                 env::panic_str("Message does not exist");
-            }
+            };
         } else {
             env::panic_str("Post does not exist");
-        }
+        };
+    }
+
+    fn assert_add_friend_call(&self, friend_id: &AccountId) {
+        let account_id = env::signer_account_id();
+
+        if let Some(account_friends) = self.accounts_friends.get(&account_id) {
+            if account_friends.contains(friend_id) {
+                env::panic_str("Friend is added already");
+            };
+        };
+    }
+
+    fn assert_update_profile_call(&self, profile: &AccountProfileData) {
+        if let Some(json_metadata) = &profile.json_metadata {
+            let result : Result<Value> = serde_json::from_str(json_metadata);
+            if result.is_err() {
+                env::panic_str("Metadata is not a valid json string");
+            };
+        };
     }
     
     fn assert_post_id(&self, post_id: &PostId) {
         // TODO: validate 'post_id' format and length
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
-        }
+        };
     }
 
     fn assert_message_id(&self, msg_id: &MessageID) {
         let post_id = &msg_id.post_id;
         self.assert_post_id(post_id);
     }
-
-
 
     // Add storage collections
 
@@ -550,7 +597,22 @@ impl Contract {
 
         account_friends
     }
-    
+
+    fn add_account_profile_storage(&mut self, account_id: &AccountId) -> AccountProfile {
+        let account_profile = AccountProfile {
+            json_metadata: "".to_string(),
+            image: LazyOption::new(
+                StorageKeys::AccountProfileImage { 
+                    account_id: env::sha256(account_id.as_bytes()),
+                },
+                None
+            )
+        };
+        
+        self.accounts_profiles.insert(account_id, &account_profile);
+
+        account_profile
+    }
     
     
     // Execute call logic
@@ -674,6 +736,23 @@ impl Contract {
         self.remove_like_from_account_likes_stat(account_id, like);
     }
 
+    fn execute_update_profile_call(&mut self, json_metadata: Option<String>, image: Option<Vec<u8>>) {
+        let account_id = env::signer_account_id();
+
+        let mut account_profile = self.accounts_profiles.get(&account_id).unwrap_or_else(|| {
+            self.add_account_profile_storage(&account_id)
+        });
+
+        if let Some(metadata) = json_metadata {
+            account_profile.json_metadata = metadata;
+        };
+
+        if let Some(bytes) = image {
+            account_profile.image.set(&bytes);
+        };
+
+        self.accounts_profiles.insert(&account_id, &account_profile);
+    }
 
     fn add_like_to_account_likes_stat(&mut self, account_id: AccountId, like: AccountLike) {
         let mut account_stats = self.accounts_stats.get(&account_id).unwrap_or_else(|| {
@@ -769,6 +848,14 @@ impl Contract {
                     Call::UnlikeMessage { msg_id } => {
                         self.execute_unlike_message_call(msg_id.into());
                         CallResult::MessageUnliked
+                    },
+                    Call::UpdateProfile { profile } => {
+                        let image: Option<Vec<u8>> = match profile.image {
+                            Some(vec) => Some(vec.into()),
+                            None => None
+                        };
+                        self.execute_update_profile_call(profile.json_metadata, image);
+                        CallResult::ProfileUpdated
                     },
                 }
             },
