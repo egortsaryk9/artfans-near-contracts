@@ -1,12 +1,11 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{env, near_bindgen, AccountId, Gas, Promise, PanicOnDefault, PromiseResult};
+use near_sdk::{env, near_bindgen, log, AccountId, Gas, Promise, PanicOnDefault, PromiseResult, StorageUsage, BorshStorageKey};
 use near_sdk::json_types::{U128, U64, Base64VecU8};
 use near_sdk::collections::{LookupMap, Vector, UnorderedSet, LazyOption};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json;
 use near_sdk::serde_json::{Result, Value};
-use near_sdk::BorshStorageKey;
-use std::convert::From;
+use std::convert::{From, TryFrom};
 
 pub mod external;
 pub use crate::external::*;
@@ -83,10 +82,10 @@ pub struct AccountProfile {
     image: LazyOption<Vec<u8>>
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
-#[serde(crate = "near_sdk::serde")]
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct Settings {
-    account_recent_likes_limit: u8
+    account_recent_likes_limit: u8,
+    message_storage_usage: StorageUsage
 }
 
 impl PartialEq for AccountLike {
@@ -190,6 +189,12 @@ pub struct AccountProfileData {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
+pub struct CustomSettingsData {
+    account_recent_likes_limit: Option<u8>
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct MessageDTO {
     msg_idx: U64,
     parent_idx: Option<U64>,
@@ -203,19 +208,27 @@ pub struct MessageDTO {
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new(owner: AccountId, fee_ft: AccountId, settings: Settings) -> Self {
+    pub fn new(owner: AccountId, fee_ft: AccountId, settings: CustomSettingsData) -> Self {
         if env::state_exists() == true {
             env::panic_str("Already initialized");
         }
-        Self {
+        let mut this = Self {
             owner,
             fee_ft,
-            settings,
+            settings: Settings {
+              account_recent_likes_limit: match settings.account_recent_likes_limit {
+                Some(account_recent_likes_limit) => account_recent_likes_limit,
+                None => 0
+              },
+              message_storage_usage: 0
+            },
             posts: LookupMap::new(StorageKeys::Posts),
             accounts_friends: LookupMap::new(StorageKeys::AccountsFriends),
             accounts_profiles: LookupMap::new(StorageKeys::AccountsProfiles),
             accounts_stats: LookupMap::new(StorageKeys::AccountsStats)
-        }
+        };
+        this.measure_message_storage();
+        this
     }
 
     pub fn add_message_to_post(&mut self, post_id: PostId, text: String) -> Promise {
@@ -258,9 +271,11 @@ impl Contract {
         self.collect_fee_and_execute_call(Call::UpdateProfile { profile })
     }
 
-    pub fn update_settings(&mut self, settings: Settings) {
+    pub fn update_settings(&mut self, settings: CustomSettingsData) {
         self.assert_owner();
-        self.settings = settings;
+        if let Some(account_recent_likes_limit) = settings.account_recent_likes_limit {
+            self.settings.account_recent_likes_limit = account_recent_likes_limit;
+        }
     }
     
     pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<MessageDTO> {
@@ -411,9 +426,9 @@ impl Contract {
         }
     }
 
-    pub fn get_current_settings(&self) -> Settings {
-        Settings {
-            account_recent_likes_limit: self.settings.account_recent_likes_limit
+    pub fn get_current_settings(&self) -> CustomSettingsData {
+        CustomSettingsData {
+            account_recent_likes_limit: Some(self.settings.account_recent_likes_limit)
         }
     }
 }
@@ -613,7 +628,51 @@ impl Contract {
 
         account_profile
     }
-    
+
+    fn measure_message_storage(&mut self) {
+
+        let before_message_storage_usage = env::storage_usage();
+        log!("before_message_storage_usage {}", &before_message_storage_usage);
+
+        let post_id = String::from("a".repeat(24)); // 24 bytes for ParasId
+        
+        let mut post = Post {
+            messages: Vector::new(
+                StorageKeys::Messages { // 1 byte prefix 
+                    post_id: env::sha256(post_id.as_bytes()) // 32 bytes for sha256
+                }
+            ),
+            likes: UnorderedSet::new(
+                StorageKeys::PostLikes { // 1 byte prefix
+                    post_id: env::sha256(post_id.as_bytes()) // 32 bytes for sha256
+                }
+            )
+        };
+
+        let msg = Message {
+            account: AccountId::new_unchecked("a".repeat(64)), // 64 bytes for max AccountId length
+            parent_idx: Some(0), // 1 byte for Option + 8 bytes for u64 idx value
+            payload: MessagePayload::Text { text: String::from("") }, // 1 byte prefix + 1 byte for string length
+            timestamp: env::block_timestamp(), // 8 bytes for u64 timestamp 
+            likes: UnorderedSet::new(
+                StorageKeys::MessageLikes { // 1 byte prefix 
+                    post_id: env::sha256(post_id.as_bytes()), // 32 bytes for sha256
+                    msg_idx: 1 // 8 bytes for u64 idx value
+                }
+            )
+        };
+        let msg_vec = msg.try_to_vec().unwrap();
+        log!("Serialized message {}", &msg_vec.len());
+
+        post.messages.push(&msg); // 48 bytes as extra bytes for a new record, see https://discord.com/channels/490367152054992913/855524499755499520/1011288707246067743
+        self.posts.insert(&post_id, &post); // 40 bytes extra bytes for a new record, see https://discord.com/channels/490367152054992913/855524499755499520/1011288707246067743
+
+        let after_message_storage_usage = env::storage_usage();
+        log!("after_message_storage_usage {}", &after_message_storage_usage);
+
+        self.settings.message_storage_usage = after_message_storage_usage - before_message_storage_usage;
+        log!("message_storage_usage {}", &self.settings.message_storage_usage);
+    }
     
     // Execute call logic
 
