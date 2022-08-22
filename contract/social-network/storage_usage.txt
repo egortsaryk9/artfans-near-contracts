@@ -1,0 +1,158 @@
+-----------------------------
+Cooбщения\Коментарии к посту
+-----------------------------
+
+Добавление первого сообщения к какому-либо посту, со следующими параметрами:
+
+    add_message_to_post '{"post_id": "aaaaaaaaaaaaaaa", "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' --accountId alice.test.near
+
+    Количество занимаемых байт: 277
+    Цена в NEAR токенах: 0.00277 NEAR
+
+    
+Добавление последующих сообщений (первого уровня) к тому же посту, со следующими параметрами:
+
+    add_message_to_post '{"post_id": "aaaaaaaaaaaaaaa", "text": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' --accountId alice.test.near
+
+    Количество занимаемых байт: 168
+    Цена в NEAR токенах: 0.00168 NEAR
+
+
+Добавление вложенного сообщений (второго уровня) к какому-либо другому сообщению, со следующими параметрами:
+
+    add_message_to_message '{"parent_msg_id": { "post_id": "aaaaaaaaaaaaaaa", "msg_idx": "1"}, "text": "cccccccccccccccccccccccccccccccccccccccccccccccccc"}' --accountId alice.test.near
+
+    Количество занимаемых байт: 176
+    Цена в NEAR токенах: 0.00176 NEAR
+
+
+
+
+
+-----------------------------
+Лайки к посту
+-----------------------------
+
+Добавление первого лайка к посту С сохранением статистики последних лайков по аккаунту, со следующими параметрами:
+
+    like_post '{ "post_id": "aaaaaaaaaaaaaaa" }' --accountId alice.test.near
+
+    Количество занимаемых байт: 446
+    Цена в NEAR токенах: 0.00446 NEAR
+
+
+Добавление последующих лайков к тому же посту С сохранением статистики последних лайков по аккаунту, со следующими параметрами:
+
+    like_post '{ "post_id": "aaaaaaaaaaaaaaa" }' --accountId yahor.test.near
+
+    Количество занимаемых байт: 294
+    Цена в NEAR токенах: 0.00294 NEAR
+
+
+Добавление первого лайка к посту БЕЗ сохранения статистики последних лайков по аккаунту, со следующими параметрами:
+
+    like_post '{ "post_id": "bbbbbbbbbbbbbbb" }' --accountId alice.test.near
+
+    Количество занимаемых байт: 362
+    Цена в NEAR токенах: 0.00362 NEAR
+
+
+Добавление последующих лайков к тому же посту БЕЗ сохранения статистики последних лайков по аккаунту, со следующими параметрами:
+
+    like_post '{ "post_id": "aaaaaaaaaaaaaaa" }' --accountId yahor.test.near
+
+    Количество занимаемых байт: 210
+    Цена в NEAR токенах: 0.0021 NEAR
+
+
+
+
+
+-----------------------------
+Лайки к сообщению\комментарию
+-----------------------------
+
+Добавление первого лайка к сообщению С сохранением статистики последних лайков по аккаунту, со следующими параметрами:
+
+    like_message '{ "msg_id": { "post_id": "aaaaaaaaaaaaaaa", "msg_idx": "0" } }' --accountId alice.test.near
+
+    Количество занимаемых байт: 430
+    Цена в NEAR токенах: 0.0043 NEAR
+
+
+Добавление последующих лайков к тому же сообщению С сохранением статистики последних лайков по аккаунту, со следующими параметрами:
+
+    like_message '{ "msg_id": { "post_id": "aaaaaaaaaaaaaaa", "msg_idx": "0" } }' --accountId yahor.test.near
+
+    Количество занимаемых байт: 254
+    Цена в NEAR токенах: 0.00254 NEAR
+
+
+Добавление первого лайка к сообщению БЕЗ сохранения статистики последних лайков по аккаунту, со следующими параметрами:
+
+    like_message '{ "msg_id": { "post_id": "aaaaaaaaaaaaaaa", "msg_idx": "1" } }' --accountId alice.test.near
+
+    Количество занимаемых байт: 402
+    Цена в NEAR токенах: 0.00402 NEAR
+
+
+Добавление последующих лайков к тому же сообщению БЕЗ сохранения статистики последних лайков по аккаунту, со следующими параметрами:
+
+    like_message '{ "msg_id": { "post_id": "aaaaaaaaaaaaaaa", "msg_idx": "1" } }' --accountId yahor.test.near
+
+    Количество занимаемых байт: 226
+    Цена в NEAR токенах: 0.00226 NEAR
+
+
+
+
+
+-----------------------------
+Добавление друга
+-----------------------------
+
+Добавление первого друга, со следующими параметрами:
+
+    add_friend '{"friend_id": "alice.test.near"}' --accountId yahor.test.near
+
+    Количество занимаемых байт: 362
+    Цена в NEAR токенах: 0.00362 NEAR
+
+
+Добавление остальных друзей, со следующими параметрами:
+
+    add_friend '{"friend_id": "boris.test.near"}' --accountId yahor.test.near
+
+    Количество занимаемых байт: 210
+    Цена в NEAR токенах: 0.0021 NEAR
+
+
+
+
+
+-----------------------------
+Обновление профайла 
+(Цена очень сильно зависит от размера картинки)
+-----------------------------
+
+Заполнение пустого профайла, со следующими параметрами:
+
+    update_profile '{"profile": { "json_metadata": "{ \"name\": \"Alice\" }", "image": "iVBORw0KGgoAAAANSUhEUgAAARgAAAEYCAY"} }' --accountId alice.test.near
+
+    Количество занимаемых байт: 243
+    Цена в NEAR токенах: 0.00243 NEAR
+
+
+Обновление существующего профайла (обновление json_metadata без картинки):
+    
+    update_profile '{"profile": { "json_metadata": "{ \"name\": \"Alice Smith\" }" } }' --accountId alice.test.near
+
+    Количество занимаемых байт: 191
+    Цена в NEAR токенах: 0.00191 NEAR
+
+Обновление существующего профайла (обновление картинки):
+    
+    Количество занимаемых байт: 5071
+    Цена в NEAR токенах: 0.05071 NEAR
+
+    update_profile '{"profile": { "image": "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"} }' --accountId alice.test.near
