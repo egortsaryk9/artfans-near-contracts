@@ -93,7 +93,10 @@ pub struct Settings {
     post_likes_collection_storage_usage: StorageUsage,
 
     min_message_like_storage_usage: StorageUsage,
-    message_likes_collection_storage_usage: StorageUsage
+    message_likes_collection_storage_usage: StorageUsage,
+
+    min_account_friend_storage_usage: StorageUsage,
+    account_friend_collection_storage_usage: StorageUsage,
 }
 
 impl PartialEq for AccountLike {
@@ -254,7 +257,10 @@ impl Contract {
               post_likes_collection_storage_usage: 0,
 
               min_message_like_storage_usage: 0,
-              message_likes_collection_storage_usage: 0
+              message_likes_collection_storage_usage: 0,
+
+              min_account_friend_storage_usage: 0,
+              account_friend_collection_storage_usage: 0,
             },
             posts_messages: LookupMap::new(StorageKeys::PostsMessages),
             posts_likes: LookupMap::new(StorageKeys::PostsLikes),
@@ -266,6 +272,7 @@ impl Contract {
         this.measure_message_storage_usage();
         this.measure_post_likes_storage_usage();
         this.measure_message_likes_storage_usage();
+        this.measure_account_friends_storage_usage();
         this
     }
 
@@ -679,6 +686,12 @@ impl Contract {
         account_friends
     }
 
+    fn remove_account_friends_storage(&mut self, account_id: &AccountId) {
+        let mut account_friends = self.accounts_friends.get(&account_id).expect("Account friends storage is not found");
+        account_friends.clear();
+        self.accounts_friends.remove(&account_id);
+    }
+
     fn add_account_profile_storage(&mut self, account_id: &AccountId) -> AccountProfile {
         let account_profile = AccountProfile {
             json_metadata: "".to_string(),
@@ -733,15 +746,6 @@ impl Contract {
 
         (parent_msg_id.post_id, U64(msg_idx))
     }
-
-    fn execute_add_friend_call(&mut self, account_id: AccountId, friend_id: AccountId) {
-        let mut account_friends = self.accounts_friends.get(&account_id).unwrap_or_else(|| {
-            self.add_account_friends_storage(&account_id)
-        });
-
-        account_friends.insert(&friend_id);
-        self.accounts_friends.insert(&account_id, &account_friends);
-    }
     
     fn execute_like_post_call(&mut self, account_id: AccountId, post_id: PostId) {
         // Update post stats
@@ -790,6 +794,15 @@ impl Contract {
         // Update account stats
         let like = AccountLike::MessageLike { msg_id };
         self.remove_like_from_account_likes_stat(account_id, like);
+    }
+
+    fn execute_add_friend_call(&mut self, account_id: AccountId, friend_id: AccountId) {
+        let mut account_friends = self.accounts_friends.get(&account_id).unwrap_or_else(|| {
+            self.add_account_friends_storage(&account_id)
+        });
+
+        account_friends.insert(&friend_id);
+        self.accounts_friends.insert(&account_id, &account_friends);
     }
 
     fn execute_update_profile_call(&mut self, account_id: AccountId, json_metadata: Option<String>, image: Option<Vec<u8>>) {
@@ -900,16 +913,16 @@ impl Contract {
             AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN)), 
             post_id.clone()
         );
-        let after_first_like_storage_usage = env::storage_usage();
+        let after_first_post_like_storage_usage = env::storage_usage();
 
         self.execute_like_post_call(
             AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN)), 
             post_id.clone()
         );
-        let after_second_like_storage_usage = env::storage_usage();
+        let after_second_post_like_storage_usage = env::storage_usage();
 
-        self.settings.min_post_like_storage_usage = after_second_like_storage_usage - after_first_like_storage_usage;
-        self.settings.post_likes_collection_storage_usage = after_first_like_storage_usage - initial_storage_usage - self.settings.min_post_like_storage_usage;
+        self.settings.min_post_like_storage_usage = after_second_post_like_storage_usage - after_first_post_like_storage_usage;
+        self.settings.post_likes_collection_storage_usage = after_first_post_like_storage_usage - initial_storage_usage - self.settings.min_post_like_storage_usage;
 
         self.remove_post_likes_storage(&post_id);
 
@@ -930,22 +943,52 @@ impl Contract {
             AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN)), 
             msg_id.clone()
         );
-        let after_first_like_storage_usage = env::storage_usage();
+        let after_first_message_like_storage_usage = env::storage_usage();
 
         self.execute_like_message_call(
             AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN)), 
             msg_id.clone()
         );
-        let after_second_like_storage_usage = env::storage_usage();
+        let after_second_message_like_storage_usage = env::storage_usage();
 
-        self.settings.min_message_like_storage_usage = after_second_like_storage_usage - after_first_like_storage_usage;
-        self.settings.message_likes_collection_storage_usage = after_first_like_storage_usage - initial_storage_usage - self.settings.min_message_like_storage_usage;
+        self.settings.min_message_like_storage_usage = after_second_message_like_storage_usage - after_first_message_like_storage_usage;
+        self.settings.message_likes_collection_storage_usage = after_first_message_like_storage_usage - initial_storage_usage - self.settings.min_message_like_storage_usage;
 
         self.remove_post_message_likes_storage(&msg_id);
 
         let final_storage_usage = env::storage_usage();
         if initial_storage_usage != final_storage_usage {
             env::panic_str("Measurement of message likes storage aborted due to data leak");
+        }
+    }
+
+    
+    fn measure_account_friends_storage_usage(&mut self) {
+
+        let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
+
+        let initial_storage_usage = env::storage_usage();
+
+        self.execute_add_friend_call(
+            account_id.clone(),
+            AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN)), 
+        );
+        let after_first_friend_storage_usage = env::storage_usage();
+
+        self.execute_add_friend_call(
+            account_id.clone(),
+            AccountId::new_unchecked("c".repeat(MIN_ACCOUNT_ID_LEN)), 
+        );
+        let after_second_friend_storage_usage = env::storage_usage();
+
+        self.settings.min_account_friend_storage_usage = after_second_friend_storage_usage - after_first_friend_storage_usage;
+        self.settings.account_friend_collection_storage_usage = after_first_friend_storage_usage - initial_storage_usage - self.settings.min_account_friend_storage_usage;
+
+        self.remove_account_friends_storage(&account_id);
+
+        let final_storage_usage = env::storage_usage();
+        if initial_storage_usage != final_storage_usage {
+            env::panic_str("Measurement of account friends storage aborted due to data leak");
         }
     }
 
@@ -982,10 +1025,6 @@ impl Contract {
                         let (post_id, msg_idx) = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
                         CallResult::MessageToMessageAdded { id: MessageID { post_id, msg_idx } }
                     },
-                    Call::AddFriend { friend_id } => {
-                        self.execute_add_friend_call(account_id, friend_id);
-                        CallResult::FriendAdded
-                    },
                     Call::LikePost { post_id } => {
                         self.execute_like_post_call(account_id, post_id);
                         CallResult::PostLiked
@@ -1001,6 +1040,10 @@ impl Contract {
                     Call::UnlikeMessage { msg_id } => {
                         self.execute_unlike_message_call(account_id, msg_id.into());
                         CallResult::MessageUnliked
+                    },
+                    Call::AddFriend { friend_id } => {
+                        self.execute_add_friend_call(account_id, friend_id);
+                        CallResult::FriendAdded
                     },
                     Call::UpdateProfile { profile } => {
                         let image: Option<Vec<u8>> = match profile.image {
