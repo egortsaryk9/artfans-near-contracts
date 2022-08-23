@@ -247,7 +247,7 @@ impl Contract {
             accounts_profiles: LookupMap::new(StorageKeys::AccountsProfiles),
             accounts_stats: LookupMap::new(StorageKeys::AccountsStats)
         };
-        this.measure_message_storage();
+        this.measure_message_storage_usage();
         this
     }
 
@@ -652,7 +652,7 @@ impl Contract {
         account_profile
     }
 
-    fn measure_message_storage(&mut self) {
+    fn measure_message_storage_usage(&mut self) {
 
         let initial_storage_usage = env::storage_usage();
 
