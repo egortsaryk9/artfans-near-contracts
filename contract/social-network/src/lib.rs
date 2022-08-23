@@ -96,7 +96,9 @@ pub struct Settings {
     message_likes_collection_storage_usage: StorageUsage,
 
     min_account_friend_storage_usage: StorageUsage,
-    account_friend_collection_storage_usage: StorageUsage,
+    account_friends_collection_storage_usage: StorageUsage,
+
+    account_profile_storage_usage: StorageUsage
 }
 
 impl PartialEq for AccountLike {
@@ -260,7 +262,9 @@ impl Contract {
               message_likes_collection_storage_usage: 0,
 
               min_account_friend_storage_usage: 0,
-              account_friend_collection_storage_usage: 0,
+              account_friends_collection_storage_usage: 0,
+
+              account_profile_storage_usage: 0
             },
             posts_messages: LookupMap::new(StorageKeys::PostsMessages),
             posts_likes: LookupMap::new(StorageKeys::PostsLikes),
@@ -273,6 +277,7 @@ impl Contract {
         this.measure_post_likes_storage_usage();
         this.measure_message_likes_storage_usage();
         this.measure_account_friends_storage_usage();
+        this.measure_account_profile_storage_usage();
         this
     }
 
@@ -714,6 +719,12 @@ impl Contract {
         account_profile
     }
 
+    fn remove_account_profile_storage(&mut self, account_id: &AccountId) {
+        let mut account_profile = self.accounts_profiles.get(&account_id).expect("Account profile storage is not found");
+        account_profile.image.remove();
+        self.accounts_profiles.remove(&account_id);
+    }
+
     // Execute call logic
 
     fn execute_add_message_to_post_call(&mut self, account_id: AccountId, post_id: PostId, text: String) -> (PostId, U64) {
@@ -908,7 +919,6 @@ impl Contract {
         }
     }
 
-
     fn measure_post_likes_storage_usage(&mut self) {
 
         let post_id = String::from("a".repeat(MIN_POST_ID_LEN));
@@ -941,7 +951,6 @@ impl Contract {
             env::panic_str("Measurement of post likes storage aborted due to data leak");
         }
     }
-
 
     fn measure_message_likes_storage_usage(&mut self) {
 
@@ -976,7 +985,6 @@ impl Contract {
         }
     }
 
-    
     fn measure_account_friends_storage_usage(&mut self) {
 
         let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
@@ -996,13 +1004,36 @@ impl Contract {
         let after_second_friend_storage_usage = env::storage_usage();
 
         self.settings.min_account_friend_storage_usage = after_second_friend_storage_usage - after_first_friend_storage_usage;
-        self.settings.account_friend_collection_storage_usage = after_first_friend_storage_usage - initial_storage_usage - self.settings.min_account_friend_storage_usage;
+        self.settings.account_friends_collection_storage_usage = after_first_friend_storage_usage - initial_storage_usage - self.settings.min_account_friend_storage_usage;
 
         self.remove_account_friends_storage(&account_id);
 
         let final_storage_usage = env::storage_usage();
         if initial_storage_usage != final_storage_usage {
             env::panic_str("Measurement of account friends storage aborted due to data leak");
+        }
+    }
+
+    fn measure_account_profile_storage_usage(&mut self) {
+
+        let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
+
+        let initial_storage_usage = env::storage_usage();
+
+        self.execute_update_profile_call(
+            account_id.clone(),
+            Some(String::from("")), 
+            Some(Vec::new())
+        );
+        let after_profile_update_storage_usage = env::storage_usage();
+
+        self.settings.account_profile_storage_usage = after_profile_update_storage_usage - initial_storage_usage;
+
+        self.remove_account_profile_storage(&account_id);
+
+        let final_storage_usage = env::storage_usage();
+        if initial_storage_usage != final_storage_usage {
+            env::panic_str("Measurement of account profile storage aborted due to data leak");
         }
     }
 
