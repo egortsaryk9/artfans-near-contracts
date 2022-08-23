@@ -673,6 +673,12 @@ impl Contract {
 
         account_stat
     }
+
+    fn remove_account_stat_storage(&mut self, account_id: &AccountId) {
+        let mut account_stat = self.accounts_stats.get(&account_id).expect("Account stats storage is not found");
+        account_stat.recent_likes.clear();
+        self.accounts_stats.remove(&account_id);
+    }
     
     fn add_account_friends_storage(&mut self, account_id: &AccountId) -> UnorderedSet<AccountId> {
        let account_friends = UnorderedSet::new(
@@ -760,7 +766,7 @@ impl Contract {
         self.add_like_to_account_likes_stat(account_id, like);
     }
 
-    fn execute_unlike_post_call(&mut self, account_id: AccountId, post_id: PostId) {        
+    fn execute_unlike_post_call(&mut self, account_id: AccountId, post_id: PostId) {
         // Update post stats
         let mut post_likes = self.posts_likes.get(&post_id).expect("Post like is not found");
         post_likes.remove(&account_id);                
@@ -784,7 +790,7 @@ impl Contract {
         self.add_like_to_account_likes_stat(account_id, like);
     }
 
-    fn execute_unlike_message_call(&mut self, account_id: AccountId, msg_id: MessageId) {        
+    fn execute_unlike_message_call(&mut self, account_id: AccountId, msg_id: MessageId) {
         // Update message stats
         let mut post_message_likes = self.posts_messages_likes.get(&msg_id).expect("Message like is not found");
         post_message_likes.remove(&account_id);
@@ -906,17 +912,19 @@ impl Contract {
     fn measure_post_likes_storage_usage(&mut self) {
 
         let post_id = String::from("a".repeat(MIN_POST_ID_LEN));
+        let account_1 = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
+        let account_2 = AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN));
 
         let initial_storage_usage = env::storage_usage();
 
         self.execute_like_post_call(
-            AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN)), 
+            account_1.clone(), 
             post_id.clone()
         );
         let after_first_post_like_storage_usage = env::storage_usage();
 
         self.execute_like_post_call(
-            AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN)), 
+            account_2.clone(), 
             post_id.clone()
         );
         let after_second_post_like_storage_usage = env::storage_usage();
@@ -925,6 +933,8 @@ impl Contract {
         self.settings.post_likes_collection_storage_usage = after_first_post_like_storage_usage - initial_storage_usage - self.settings.min_post_like_storage_usage;
 
         self.remove_post_likes_storage(&post_id);
+        self.remove_account_stat_storage(&account_1);
+        self.remove_account_stat_storage(&account_2);
 
         let final_storage_usage = env::storage_usage();
         if initial_storage_usage != final_storage_usage {
@@ -936,17 +946,19 @@ impl Contract {
     fn measure_message_likes_storage_usage(&mut self) {
 
         let msg_id = MessageId { post_id: String::from("a".repeat(MIN_POST_ID_LEN)), msg_idx: 1 };
+        let account_1 = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
+        let account_2 = AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN));
 
         let initial_storage_usage = env::storage_usage();
 
         self.execute_like_message_call(
-            AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN)), 
+            account_1.clone(), 
             msg_id.clone()
         );
         let after_first_message_like_storage_usage = env::storage_usage();
 
         self.execute_like_message_call(
-            AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN)), 
+            account_2.clone(), 
             msg_id.clone()
         );
         let after_second_message_like_storage_usage = env::storage_usage();
@@ -955,6 +967,8 @@ impl Contract {
         self.settings.message_likes_collection_storage_usage = after_first_message_like_storage_usage - initial_storage_usage - self.settings.min_message_like_storage_usage;
 
         self.remove_post_message_likes_storage(&msg_id);
+        self.remove_account_stat_storage(&account_1);
+        self.remove_account_stat_storage(&account_2);
 
         let final_storage_usage = env::storage_usage();
         if initial_storage_usage != final_storage_usage {
