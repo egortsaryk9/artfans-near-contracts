@@ -18,6 +18,7 @@ pub struct Contract {
     fee_ft: AccountId,
     settings: Settings,
     posts_messages: LookupMap<PostId, Vector<Message>>,
+    posts_likes: LookupMap<PostId, UnorderedSet<AccountId>>,
     accounts_friends: LookupMap<AccountId, UnorderedSet<AccountId>>,
     accounts_profiles: LookupMap<AccountId, AccountProfile>,
     accounts_stats: LookupMap<AccountId, AccountStats>,
@@ -27,6 +28,7 @@ pub struct Contract {
 pub enum StorageKeys {
     PostsMessages,
     PostMessages { post_id: Vec<u8> },
+    PostsLikes,
     PostLikes { post_id: Vec<u8> },
     MessageLikes { post_id: Vec<u8>, msg_idx: u64 },
     AccountsStats,
@@ -43,12 +45,6 @@ type PostId = String;
 pub struct MessageId {
     post_id: PostId,
     msg_idx: u64
-}
-
-#[derive(BorshDeserialize, BorshSerialize)]
-pub struct Post {
-    messages: Vector<Message>,
-    // likes: UnorderedSet<AccountId>
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -225,6 +221,7 @@ impl Contract {
               add_next_message_storage_usage: 0
             },
             posts_messages: LookupMap::new(StorageKeys::PostsMessages),
+            posts_likes: LookupMap::new(StorageKeys::PostsLikes),
             accounts_friends: LookupMap::new(StorageKeys::AccountsFriends),
             accounts_profiles: LookupMap::new(StorageKeys::AccountsProfiles),
             accounts_stats: LookupMap::new(StorageKeys::AccountsStats)
@@ -243,15 +240,15 @@ impl Contract {
         self.collect_fee_and_execute_call(Call::AddMessageToMessage { parent_msg_id, text })
     }
 
-    // pub fn like_post(&mut self, post_id: PostId) -> Promise {
-    //     self.assert_like_post_call(&post_id);
-    //     self.collect_fee_and_execute_call(Call::LikePost { post_id })
-    // }
+    pub fn like_post(&mut self, post_id: PostId) -> Promise {
+        self.assert_like_post_call(&post_id);
+        self.collect_fee_and_execute_call(Call::LikePost { post_id })
+    }
 
-    // pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
-    //     self.assert_unlike_post_call(&post_id);
-    //     self.collect_fee_and_execute_call(Call::UnlikePost { post_id })
-    // }
+    pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
+        self.assert_unlike_post_call(&post_id);
+        self.collect_fee_and_execute_call(Call::UnlikePost { post_id })
+    }
 
     // pub fn like_message(&mut self, msg_id: MessageID) -> Promise {
     //     self.assert_like_message_call(&msg_id);
@@ -281,12 +278,13 @@ impl Contract {
     }
     
     pub fn get_post_messages(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<MessageDTO> {
-        if let Some(messages) = self.posts_messages.get(&post_id) {
+        if let Some(post_messages) = self.posts_messages.get(&post_id) {
             let from = u64::from(from_index);
             let lim = u64::from(limit);
-            (from..std::cmp::min(from + lim, messages.len()))
+            
+            (from..std::cmp::min(from + lim, post_messages.len()))
                 .map(|idx| {
-                    let msg = messages.get(idx).unwrap();
+                    let msg = post_messages.get(idx).unwrap();
                     match msg.payload {
                         MessagePayload::Text { text } => {
                             MessageDTO {
@@ -298,7 +296,10 @@ impl Contract {
                                 account: msg.account,
                                 text: Some(text),
                                 timestamp: U64(msg.timestamp),
-                                likes_count: U64(0) //U64(msg.likes.len())
+                                likes_count: match self.posts_likes.get(&post_id) {
+                                    Some(post_likes) => U64(post_likes.len()),
+                                    None => U64(0)
+                                }
                             }
                         }
                     }
@@ -310,9 +311,9 @@ impl Contract {
     }
 
     pub fn get_post_message(&self, msg_id: MessageID) -> Option<MessageDTO> {
-        if let Some(messages) = self.posts_messages.get(&msg_id.post_id) {
+        if let Some(post_messages) = self.posts_messages.get(&msg_id.post_id) {
             let idx = u64::from(msg_id.msg_idx);
-            if let Some(msg) = messages.get(idx) {
+            if let Some(msg) = post_messages.get(idx) {
                 match msg.payload {
                     MessagePayload::Text { text } => {
                         Some(MessageDTO {
@@ -336,22 +337,22 @@ impl Contract {
         }
     }
 
-    // pub fn get_post_likes(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<AccountId> {
-    //     if let Some(post) = self.posts.get(&post_id) {
-    //         use std::convert::TryFrom;
-    //         if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
-    //             post.likes
-    //                 .iter()
-    //                 .skip(from)
-    //                 .take(lim)
-    //                 .collect()
-    //         } else {
-    //             env::panic_str("'usize' conversion failed");
-    //         }
-    //     } else {
-    //         env::panic_str("Post is not found");
-    //     }
-    // }
+    pub fn get_post_likes(&self, post_id: PostId, from_index: U64, limit: U64) -> Vec<AccountId> {
+        if let Some(post_likes) = self.posts_likes.get(&post_id) {
+            use std::convert::TryFrom;
+            if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
+                post_likes
+                    .iter()
+                    .skip(from)
+                    .take(lim)
+                    .collect()
+            } else {
+                env::panic_str("'usize' conversion failed");
+            }
+        } else {
+            Vec::new()
+        }
+    }
 
     // pub fn get_message_likes(&self, msg_id: MessageID, from_index: U64, limit: U64) -> Vec<AccountId> {
     //     if let Some(post) = self.posts.get(&msg_id.post_id) {
@@ -462,8 +463,8 @@ impl Contract {
         let post_id = &parent_msg_id.post_id;
         let msg_idx: u64 = parent_msg_id.msg_idx.into();
         
-        if let Some(messages) = self.posts_messages.get(post_id) {
-            if !messages.get(msg_idx).is_some() {
+        if let Some(post_messages) = self.posts_messages.get(post_id) {
+            if !post_messages.get(msg_idx).is_some() {
                 env::panic_str("Parent message does not exist");
             };
         } else {
@@ -471,34 +472,31 @@ impl Contract {
         };
     }
 
-    // fn assert_like_post_call(&self, post_id: &PostId) {
-    //     let account_id = env::signer_account_id();
+    fn assert_like_post_call(&self, post_id: &PostId) {
+        let account_id = env::signer_account_id();
 
-    //     self.assert_post_id(post_id);
+        self.assert_post_id(post_id);
 
-    //     if let Some(post) = self.posts.get(post_id) {
-    //         if post.likes.contains(&account_id) {
-    //             env::panic_str("Post is liked already");
-    //         };
-    //     };
-    //     // else {
-    //     //     env::panic_str("Post does not exist");
-    //     // }
-    // }
+        if let Some(post_likes) = self.posts_likes.get(post_id) {
+            if post_likes.contains(&account_id) {
+                env::panic_str("Post is liked already");
+            };
+        };
+    }
 
-    // fn assert_unlike_post_call(&self, post_id: &PostId) {
-    //     let account_id = env::signer_account_id();
+    fn assert_unlike_post_call(&self, post_id: &PostId) {
+        let account_id = env::signer_account_id();
 
-    //     self.assert_post_id(post_id);
+        self.assert_post_id(post_id);
 
-    //     if let Some(post) = self.posts.get(post_id) {
-    //         if !post.likes.contains(&account_id) {
-    //             env::panic_str("Post is not liked");
-    //         };
-    //     } else {
-    //         env::panic_str("Post does not exist");
-    //     };
-    // }
+        if let Some(post_likes) = self.posts_likes.get(post_id) {
+            if !post_likes.contains(&account_id) {
+                env::panic_str("Post is not liked");
+            };
+        } else {
+            env::panic_str("Post is not liked");
+        };
+    }
 
     // fn assert_like_message_call(&self, msg_id: &MessageID) {
     //     let account_id = env::signer_account_id();
@@ -575,15 +573,27 @@ impl Contract {
     // Add storage collections
 
     fn add_post_messages_storage(&mut self, post_id: &PostId) -> Vector<Message> {
-        let messages = Vector::new(
+        let post_messages = Vector::new(
             StorageKeys::PostMessages { 
                 post_id: env::sha256(post_id.as_bytes()) 
             }
         );
 
-        self.posts_messages.insert(post_id, &messages);
+        self.posts_messages.insert(post_id, &post_messages);
 
-        messages
+        post_messages
+    }
+
+    fn add_post_likes_storage(&mut self, post_id: &PostId) -> UnorderedSet<AccountId> {
+        let post_likes = UnorderedSet::new(
+            StorageKeys::PostLikes {
+                post_id: env::sha256(post_id.as_bytes())
+            }
+        );
+
+        self.posts_likes.insert(post_id, &post_likes);
+
+        post_likes
     }
 
     fn add_account_stat_storage(&mut self, account_id: &AccountId) -> AccountStats {
@@ -630,7 +640,7 @@ impl Contract {
 
         let post_id = String::from("a".repeat(24));
         
-        let mut messages = Vector::new(
+        let mut post_messages = Vector::new(
             StorageKeys::PostMessages { 
                 post_id: env::sha256(post_id.as_bytes())
             }
@@ -643,8 +653,8 @@ impl Contract {
             timestamp: env::block_timestamp()
         };
 
-        messages.push(&first_msg);
-        self.posts_messages.insert(&post_id, &messages);
+        post_messages.push(&first_msg);
+        self.posts_messages.insert(&post_id, &post_messages);
 
         let after_first_message_storage_usage = env::storage_usage();
         self.settings.add_first_message_storage_usage = after_first_message_storage_usage - initial_storage_usage;
@@ -656,14 +666,14 @@ impl Contract {
             payload: MessagePayload::Text { text: String::from("") },
             timestamp: env::block_timestamp()
         };
-        messages.push(&next_msg);
-        self.posts_messages.insert(&post_id, &messages);
+        post_messages.push(&next_msg);
+        self.posts_messages.insert(&post_id, &post_messages);
 
         let after_next_message_storage_usage = env::storage_usage();
         self.settings.add_next_message_storage_usage = after_next_message_storage_usage - after_first_message_storage_usage;
 
 
-        messages.clear();
+        post_messages.clear();
         self.posts_messages.remove(&post_id);
 
         let final_storage_usage = env::storage_usage();
@@ -677,11 +687,11 @@ impl Contract {
     fn execute_add_message_to_post_call(&mut self, post_id: PostId, text: String) -> (PostId, U64) {
         let account_id = env::signer_account_id();
         
-        let mut messages = self.posts_messages.get(&post_id).unwrap_or_else(|| {
+        let mut post_messages = self.posts_messages.get(&post_id).unwrap_or_else(|| {
             self.add_post_messages_storage(&post_id)
         });
         
-        let msg_idx = messages.len();
+        let msg_idx = post_messages.len();
         let msg = Message {
             account: account_id,
             parent_idx: None,
@@ -695,8 +705,8 @@ impl Contract {
             // )
         };
 
-        messages.push(&msg);
-        self.posts_messages.insert(&post_id, &messages);
+        post_messages.push(&msg);
+        self.posts_messages.insert(&post_id, &post_messages);
 
         (post_id, U64(msg_idx))
     }
@@ -704,9 +714,9 @@ impl Contract {
     fn execute_add_message_to_message_call(&mut self, parent_msg_id: MessageId, text: String) -> (PostId, U64) {
         let account_id = env::signer_account_id();
         
-        let mut messages = self.posts_messages.get(&parent_msg_id.post_id).expect("Post is not found");
+        let mut post_messages = self.posts_messages.get(&parent_msg_id.post_id).expect("Post is not found");
         
-        let msg_idx = messages.len();
+        let msg_idx = post_messages.len();
         let msg = Message {
             account: account_id,
             parent_idx: Some(parent_msg_id.msg_idx),
@@ -719,8 +729,8 @@ impl Contract {
             //     }
             // )
         };
-        messages.push(&msg);
-        self.posts_messages.insert(&parent_msg_id.post_id, &messages);
+        post_messages.push(&msg);
+        self.posts_messages.insert(&parent_msg_id.post_id, &post_messages);
 
         (parent_msg_id.post_id, U64(msg_idx))
     }
@@ -736,33 +746,33 @@ impl Contract {
         self.accounts_friends.insert(&account_id, &account_friends);
     }
     
-    // fn execute_like_post_call(&mut self, post_id: PostId) {
-    //     let account_id = env::signer_account_id();
+    fn execute_like_post_call(&mut self, post_id: PostId) {
+        let account_id = env::signer_account_id();
 
-    //     // Update post stats
-    //     let mut post = self.posts.get(&post_id).unwrap_or_else(|| {
-    //         self.add_post_storage(&post_id)
-    //     });
-    //     post.likes.insert(&account_id);
-    //     self.posts.insert(&post_id, &post);
+        // Update post stats
+        let mut post_likes = self.posts_likes.get(&post_id).unwrap_or_else(|| {
+            self.add_post_likes_storage(&post_id)
+        });
+        post_likes.insert(&account_id);
+        self.posts_likes.insert(&post_id, &post_likes);
 
-    //     // Update account stats
-    //     let like = AccountLike::PostLike { post_id };
-    //     self.add_like_to_account_likes_stat(account_id, like);
-    // }
+        // Update account stats
+        let like = AccountLike::PostLike { post_id };
+        self.add_like_to_account_likes_stat(account_id, like);
+    }
 
-    // fn execute_unlike_post_call(&mut self, post_id: PostId) {
-    //     let account_id = env::signer_account_id();
+    fn execute_unlike_post_call(&mut self, post_id: PostId) {
+        let account_id = env::signer_account_id();
         
-    //     // Update post stats
-    //     let mut post = self.posts.get(&post_id).expect("Post is not found");
-    //     post.likes.remove(&account_id);                
-    //     self.posts.insert(&post_id, &post);
+        // Update post stats
+        let mut post_likes = self.posts_likes.get(&post_id).expect("Post like is not found");
+        post_likes.remove(&account_id);                
+        self.posts_likes.insert(&post_id, &post_likes);
 
-    //     // Update account stats
-    //     let like = AccountLike::PostLike { post_id };
-    //     self.remove_like_from_account_likes_stat(account_id, like);
-    // }
+        // Update account stats
+        let like = AccountLike::PostLike { post_id };
+        self.remove_like_from_account_likes_stat(account_id, like);
+    }
 
     // fn execute_like_message_call(&mut self, msg_id: MessageId) {
     //     let account_id = env::signer_account_id();
@@ -892,11 +902,11 @@ impl Contract {
                         CallResult::FriendAdded
                     },
                     Call::LikePost { post_id } => {
-                        // self.execute_like_post_call(post_id);
+                        self.execute_like_post_call(post_id);
                         CallResult::PostLiked
                     },
                     Call::UnlikePost { post_id } => {
-                        // self.execute_unlike_post_call(post_id);
+                        self.execute_unlike_post_call(post_id);
                         CallResult::PostUnliked
                     },
                     Call::LikeMessage { msg_id } => {
