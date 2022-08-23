@@ -60,7 +60,6 @@ pub struct Message {
     parent_idx: Option<u64>,
     payload: MessagePayload,
     timestamp: u64,
-    // likes: UnorderedSet<AccountId>
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -659,11 +658,7 @@ impl Contract {
 
         let post_id = String::from("a".repeat(24));
         
-        let mut post_messages = Vector::new(
-            StorageKeys::PostMessages { 
-                post_id: env::sha256(post_id.as_bytes())
-            }
-        );
+        let mut post_messages = self.add_post_messages_storage(&post_id);
 
         let first_msg = Message {
             account: AccountId::new_unchecked("a".repeat(64)),
