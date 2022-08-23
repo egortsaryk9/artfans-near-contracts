@@ -19,7 +19,8 @@ const MIN_POST_MESSAGE_LEN : usize = 1;
 pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
-    settings: Settings,
+    custom_settings: CustomSettings,
+    storage_settings: StorageSettings,
     posts_messages: LookupMap<PostId, Vector<Message>>,
     posts_likes: LookupMap<PostId, UnorderedSet<AccountId>>,
     posts_messages_likes: LookupMap<MessageId, UnorderedSet<AccountId>>,
@@ -82,10 +83,15 @@ pub struct AccountProfile {
     image: LazyOption<Vec<u8>>
 }
 
-#[derive(BorshDeserialize, BorshSerialize)]
-pub struct Settings {
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct CustomSettings {
     account_recent_likes_limit: u8,
+}
 
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct StorageSettings {
     min_message_storage_usage: StorageUsage,
     messages_collection_storage_usage: StorageUsage,
 
@@ -247,24 +253,22 @@ impl Contract {
         let mut this = Self {
             owner,
             fee_ft,
-            settings: Settings {
+            custom_settings: CustomSettings {
               account_recent_likes_limit: match settings.account_recent_likes_limit {
                 Some(account_recent_likes_limit) => account_recent_likes_limit,
                 None => 0
               },
-              min_message_storage_usage: 0,
-              messages_collection_storage_usage: 0,
-   
-              min_post_like_storage_usage: 0,
-              post_likes_collection_storage_usage: 0,
-
-              min_message_like_storage_usage: 0,
-              message_likes_collection_storage_usage: 0,
-
-              min_account_friend_storage_usage: 0,
-              account_friends_collection_storage_usage: 0,
-
-              account_profile_storage_usage: 0
+            }, 
+            storage_settings: StorageSettings {
+                min_message_storage_usage: 0,
+                messages_collection_storage_usage: 0,
+                min_post_like_storage_usage: 0,
+                post_likes_collection_storage_usage: 0,
+                min_message_like_storage_usage: 0,
+                message_likes_collection_storage_usage: 0,
+                min_account_friend_storage_usage: 0,
+                account_friends_collection_storage_usage: 0,
+                account_profile_storage_usage: 0
             },
             posts_messages: LookupMap::new(StorageKeys::PostsMessages),
             posts_likes: LookupMap::new(StorageKeys::PostsLikes),
@@ -324,7 +328,7 @@ impl Contract {
     pub fn update_settings(&mut self, settings: CustomSettingsData) {
         self.assert_owner();
         if let Some(account_recent_likes_limit) = settings.account_recent_likes_limit {
-            self.settings.account_recent_likes_limit = account_recent_likes_limit;
+            self.custom_settings.account_recent_likes_limit = account_recent_likes_limit;
         }
     }
     
@@ -479,10 +483,12 @@ impl Contract {
         }
     }
 
-    pub fn get_current_settings(&self) -> CustomSettingsData {
-        CustomSettingsData {
-            account_recent_likes_limit: Some(self.settings.account_recent_likes_limit)
-        }
+    pub fn get_custom_settings(&self) -> CustomSettings {
+        self.custom_settings.clone()
+    }
+
+    pub fn get_storage_settings(&self) -> StorageSettings {
+        self.storage_settings.clone()
     }
 
 }
@@ -843,7 +849,7 @@ impl Contract {
             self.add_account_stat_storage(&account_id)
         });
 
-        let account_recent_likes_limit = usize::from(self.settings.account_recent_likes_limit);
+        let account_recent_likes_limit = usize::from(self.custom_settings.account_recent_likes_limit);
 
         let updated_account_stats = if account_stats.recent_likes.len() > 0 && account_recent_likes_limit == 0 {
             account_stats.recent_likes.clear();
@@ -908,8 +914,8 @@ impl Contract {
         );
         let after_second_message_storage_usage = env::storage_usage();
       
-        self.settings.min_message_storage_usage = after_second_message_storage_usage - after_first_message_storage_usage;
-        self.settings.messages_collection_storage_usage = after_first_message_storage_usage - initial_storage_usage - self.settings.min_message_storage_usage;
+        self.storage_settings.min_message_storage_usage = after_second_message_storage_usage - after_first_message_storage_usage;
+        self.storage_settings.messages_collection_storage_usage = after_first_message_storage_usage - initial_storage_usage - self.storage_settings.min_message_storage_usage;
 
         self.remove_post_messages_storage(&post_id);
 
@@ -939,8 +945,8 @@ impl Contract {
         );
         let after_second_post_like_storage_usage = env::storage_usage();
 
-        self.settings.min_post_like_storage_usage = after_second_post_like_storage_usage - after_first_post_like_storage_usage;
-        self.settings.post_likes_collection_storage_usage = after_first_post_like_storage_usage - initial_storage_usage - self.settings.min_post_like_storage_usage;
+        self.storage_settings.min_post_like_storage_usage = after_second_post_like_storage_usage - after_first_post_like_storage_usage;
+        self.storage_settings.post_likes_collection_storage_usage = after_first_post_like_storage_usage - initial_storage_usage - self.storage_settings.min_post_like_storage_usage;
 
         self.remove_post_likes_storage(&post_id);
         self.remove_account_stat_storage(&account_1);
@@ -972,8 +978,8 @@ impl Contract {
         );
         let after_second_message_like_storage_usage = env::storage_usage();
 
-        self.settings.min_message_like_storage_usage = after_second_message_like_storage_usage - after_first_message_like_storage_usage;
-        self.settings.message_likes_collection_storage_usage = after_first_message_like_storage_usage - initial_storage_usage - self.settings.min_message_like_storage_usage;
+        self.storage_settings.min_message_like_storage_usage = after_second_message_like_storage_usage - after_first_message_like_storage_usage;
+        self.storage_settings.message_likes_collection_storage_usage = after_first_message_like_storage_usage - initial_storage_usage - self.storage_settings.min_message_like_storage_usage;
 
         self.remove_post_message_likes_storage(&msg_id);
         self.remove_account_stat_storage(&account_1);
@@ -993,18 +999,18 @@ impl Contract {
 
         self.execute_add_friend_call(
             account_id.clone(),
-            AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN)), 
+            AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN))
         );
         let after_first_friend_storage_usage = env::storage_usage();
 
         self.execute_add_friend_call(
             account_id.clone(),
-            AccountId::new_unchecked("c".repeat(MIN_ACCOUNT_ID_LEN)), 
+            AccountId::new_unchecked("c".repeat(MIN_ACCOUNT_ID_LEN))
         );
         let after_second_friend_storage_usage = env::storage_usage();
 
-        self.settings.min_account_friend_storage_usage = after_second_friend_storage_usage - after_first_friend_storage_usage;
-        self.settings.account_friends_collection_storage_usage = after_first_friend_storage_usage - initial_storage_usage - self.settings.min_account_friend_storage_usage;
+        self.storage_settings.min_account_friend_storage_usage = after_second_friend_storage_usage - after_first_friend_storage_usage;
+        self.storage_settings.account_friends_collection_storage_usage = after_first_friend_storage_usage - initial_storage_usage - self.storage_settings.min_account_friend_storage_usage;
 
         self.remove_account_friends_storage(&account_id);
 
@@ -1027,7 +1033,7 @@ impl Contract {
         );
         let after_profile_update_storage_usage = env::storage_usage();
 
-        self.settings.account_profile_storage_usage = after_profile_update_storage_usage - initial_storage_usage;
+        self.storage_settings.account_profile_storage_usage = after_profile_update_storage_usage - initial_storage_usage;
 
         self.remove_account_profile_storage(&account_id);
 
