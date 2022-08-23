@@ -10,6 +10,9 @@ use std::convert::{From, TryFrom};
 pub mod external;
 pub use crate::external::*;
 
+const MIN_ACCOUNT_ID_LEN : usize = 2;
+const MIN_POST_ID_LEN : usize = 24;
+const MIN_POST_MESSAGE_LEN : usize = 1;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -43,7 +46,7 @@ pub enum StorageKeys {
 
 type PostId = String;
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Clone)]
 pub struct MessageId {
     post_id: PostId,
     msg_idx: u64
@@ -82,8 +85,15 @@ pub struct AccountProfile {
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct Settings {
     account_recent_likes_limit: u8,
-    add_first_message_storage_usage: StorageUsage,
-    add_next_message_storage_usage: StorageUsage
+
+    min_message_storage_usage: StorageUsage,
+    messages_collection_storage_usage: StorageUsage,
+
+    min_post_like_storage_usage: StorageUsage,
+    post_likes_collection_storage_usage: StorageUsage,
+
+    min_message_like_storage_usage: StorageUsage,
+    message_likes_collection_storage_usage: StorageUsage
 }
 
 impl PartialEq for AccountLike {
@@ -237,8 +247,14 @@ impl Contract {
                 Some(account_recent_likes_limit) => account_recent_likes_limit,
                 None => 0
               },
-              add_first_message_storage_usage: 0,
-              add_next_message_storage_usage: 0
+              min_message_storage_usage: 0,
+              messages_collection_storage_usage: 0,
+   
+              min_post_like_storage_usage: 0,
+              post_likes_collection_storage_usage: 0,
+
+              min_message_like_storage_usage: 0,
+              message_likes_collection_storage_usage: 0
             },
             posts_messages: LookupMap::new(StorageKeys::PostsMessages),
             posts_likes: LookupMap::new(StorageKeys::PostsLikes),
@@ -248,6 +264,8 @@ impl Contract {
             accounts_stats: LookupMap::new(StorageKeys::AccountsStats)
         };
         this.measure_message_storage_usage();
+        this.measure_post_likes_storage_usage();
+        this.measure_message_likes_storage_usage();
         this
     }
 
@@ -465,18 +483,25 @@ impl Contract {
     // Assert incoming call
 
     fn assert_add_message_to_post_call(&self, post_id: &PostId, text: &String) {
-        // TODO: validate 'text' format and length
         if text.trim().is_empty() {
             env::panic_str("'text' is empty or whitespace");
         };
+        
+        if text.len() < MIN_POST_MESSAGE_LEN {
+            env::panic_str("'text' length is too small");
+        }
+
         self.assert_post_id(post_id);
     }
 
     fn assert_add_message_to_message_call(&self, parent_msg_id: &MessageID, text: &String) {
-        // TODO: validate 'text' format and length
         if text.trim().is_empty() {
             env::panic_str("'text' is empty or whitespace");
         };
+
+        if text.len() < MIN_POST_MESSAGE_LEN {
+            env::panic_str("'text' length is too small");
+        }
 
         self.assert_message_id(parent_msg_id);
 
@@ -589,6 +614,12 @@ impl Contract {
         post_messages
     }
 
+    fn remove_post_messages_storage(&mut self, post_id: &PostId) {
+        let mut post_messages = self.posts_messages.get(&post_id).expect("Post messages storage is not found");
+        post_messages.clear();
+        self.posts_messages.remove(&post_id);
+    }
+
     fn add_post_likes_storage(&mut self, post_id: &PostId) -> UnorderedSet<AccountId> {
         let post_likes = UnorderedSet::new(
             StorageKeys::PostLikes {
@@ -599,6 +630,12 @@ impl Contract {
         self.posts_likes.insert(post_id, &post_likes);
 
         post_likes
+    }
+
+    fn remove_post_likes_storage(&mut self, post_id: &PostId) {
+        let mut post_likes = self.posts_likes.get(&post_id).expect("Post likes storage is not found");
+        post_likes.clear();
+        self.posts_likes.remove(&post_id);
     }
 
     fn add_post_message_likes_storage(&mut self, msg_id: &MessageId) -> UnorderedSet<AccountId> {
@@ -612,6 +649,12 @@ impl Contract {
         self.posts_messages_likes.insert(&msg_id, &post_message_likes);
 
         post_message_likes
+    }
+
+    fn remove_post_message_likes_storage(&mut self, msg_id: &MessageId) {
+        let mut post_message_likes = self.posts_messages_likes.get(&msg_id).expect("Messages likes storage is not found");
+        post_message_likes.clear();
+        self.posts_messages_likes.remove(&msg_id);
     }
 
     fn add_account_stat_storage(&mut self, account_id: &AccountId) -> AccountStats {
@@ -652,54 +695,9 @@ impl Contract {
         account_profile
     }
 
-    fn measure_message_storage_usage(&mut self) {
-
-        let initial_storage_usage = env::storage_usage();
-
-        let post_id = String::from("a".repeat(24));
-        
-        let mut post_messages = self.add_post_messages_storage(&post_id);
-
-        let first_msg = Message {
-            account: AccountId::new_unchecked("a".repeat(64)),
-            parent_idx: Some(1),
-            payload: MessagePayload::Text { text: String::from("") },
-            timestamp: env::block_timestamp()
-        };
-
-        post_messages.push(&first_msg);
-        self.posts_messages.insert(&post_id, &post_messages);
-
-        let after_first_message_storage_usage = env::storage_usage();
-        self.settings.add_first_message_storage_usage = after_first_message_storage_usage - initial_storage_usage;
-
-        
-        let next_msg = Message {
-            account: AccountId::new_unchecked("a".repeat(64)),
-            parent_idx: Some(1),
-            payload: MessagePayload::Text { text: String::from("") },
-            timestamp: env::block_timestamp()
-        };
-        post_messages.push(&next_msg);
-        self.posts_messages.insert(&post_id, &post_messages);
-
-        let after_next_message_storage_usage = env::storage_usage();
-        self.settings.add_next_message_storage_usage = after_next_message_storage_usage - after_first_message_storage_usage;
-
-
-        post_messages.clear();
-        self.posts_messages.remove(&post_id);
-
-        let final_storage_usage = env::storage_usage();
-        if initial_storage_usage != final_storage_usage {
-            env::panic_str("Measurement of message storage aborted due to data leak");
-        }
-    }
-
     // Execute call logic
 
-    fn execute_add_message_to_post_call(&mut self, post_id: PostId, text: String) -> (PostId, U64) {
-        let account_id = env::signer_account_id();
+    fn execute_add_message_to_post_call(&mut self, account_id: AccountId, post_id: PostId, text: String) -> (PostId, U64) {
         
         let mut post_messages = self.posts_messages.get(&post_id).unwrap_or_else(|| {
             self.add_post_messages_storage(&post_id)
@@ -719,8 +717,7 @@ impl Contract {
         (post_id, U64(msg_idx))
     }
 
-    fn execute_add_message_to_message_call(&mut self, parent_msg_id: MessageId, text: String) -> (PostId, U64) {
-        let account_id = env::signer_account_id();
+    fn execute_add_message_to_message_call(&mut self, account_id: AccountId, parent_msg_id: MessageId, text: String) -> (PostId, U64) {
         
         let mut post_messages = self.posts_messages.get(&parent_msg_id.post_id).expect("Post is not found");
         
@@ -737,9 +734,7 @@ impl Contract {
         (parent_msg_id.post_id, U64(msg_idx))
     }
 
-    fn execute_add_friend_call(&mut self, friend_id: AccountId) {
-        let account_id = env::signer_account_id();
-
+    fn execute_add_friend_call(&mut self, account_id: AccountId, friend_id: AccountId) {
         let mut account_friends = self.accounts_friends.get(&account_id).unwrap_or_else(|| {
             self.add_account_friends_storage(&account_id)
         });
@@ -748,9 +743,7 @@ impl Contract {
         self.accounts_friends.insert(&account_id, &account_friends);
     }
     
-    fn execute_like_post_call(&mut self, post_id: PostId) {
-        let account_id = env::signer_account_id();
-
+    fn execute_like_post_call(&mut self, account_id: AccountId, post_id: PostId) {
         // Update post stats
         let mut post_likes = self.posts_likes.get(&post_id).unwrap_or_else(|| {
             self.add_post_likes_storage(&post_id)
@@ -763,9 +756,7 @@ impl Contract {
         self.add_like_to_account_likes_stat(account_id, like);
     }
 
-    fn execute_unlike_post_call(&mut self, post_id: PostId) {
-        let account_id = env::signer_account_id();
-        
+    fn execute_unlike_post_call(&mut self, account_id: AccountId, post_id: PostId) {        
         // Update post stats
         let mut post_likes = self.posts_likes.get(&post_id).expect("Post like is not found");
         post_likes.remove(&account_id);                
@@ -776,9 +767,7 @@ impl Contract {
         self.remove_like_from_account_likes_stat(account_id, like);
     }
 
-    fn execute_like_message_call(&mut self, msg_id: MessageId) {
-        let account_id = env::signer_account_id();
-
+    fn execute_like_message_call(&mut self, account_id: AccountId, msg_id: MessageId) {
         // Update message stats
         let mut post_message_likes = self.posts_messages_likes.get(&msg_id).unwrap_or_else(|| {
             self.add_post_message_likes_storage(&msg_id)
@@ -791,9 +780,7 @@ impl Contract {
         self.add_like_to_account_likes_stat(account_id, like);
     }
 
-    fn execute_unlike_message_call(&mut self, msg_id: MessageId) {
-        let account_id = env::signer_account_id();
-        
+    fn execute_unlike_message_call(&mut self, account_id: AccountId, msg_id: MessageId) {        
         // Update message stats
         let mut post_message_likes = self.posts_messages_likes.get(&msg_id).expect("Message like is not found");
         post_message_likes.remove(&account_id);
@@ -805,9 +792,7 @@ impl Contract {
         self.remove_like_from_account_likes_stat(account_id, like);
     }
 
-    fn execute_update_profile_call(&mut self, json_metadata: Option<String>, image: Option<Vec<u8>>) {
-        let account_id = env::signer_account_id();
-
+    fn execute_update_profile_call(&mut self, account_id: AccountId, json_metadata: Option<String>, image: Option<Vec<u8>>) {
         let mut account_profile = self.accounts_profiles.get(&account_id).unwrap_or_else(|| {
             self.add_account_profile_storage(&account_id)
         });
@@ -868,6 +853,103 @@ impl Contract {
         self.accounts_stats.insert(&account_id, &updated_account_stats);
     }
 
+
+    // Measure post storage usage
+
+    fn measure_message_storage_usage(&mut self) {
+
+        let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
+        let post_id = String::from("a".repeat(MIN_POST_ID_LEN));
+        let text = String::from("a".repeat(MIN_POST_MESSAGE_LEN));
+
+        let initial_storage_usage = env::storage_usage();
+
+        self.execute_add_message_to_post_call(
+            account_id.clone(), 
+            post_id.clone(), 
+            text.clone()
+        );
+        let after_first_message_storage_usage = env::storage_usage();
+        
+        self.execute_add_message_to_post_call(
+            account_id, 
+            post_id.clone(),
+            text
+        );
+        let after_second_message_storage_usage = env::storage_usage();
+      
+        self.settings.min_message_storage_usage = after_second_message_storage_usage - after_first_message_storage_usage;
+        self.settings.messages_collection_storage_usage = after_first_message_storage_usage - initial_storage_usage - self.settings.min_message_storage_usage;
+
+        self.remove_post_messages_storage(&post_id);
+
+        let final_storage_usage = env::storage_usage();
+        if initial_storage_usage != final_storage_usage {
+            env::panic_str("Measurement of message storage aborted due to data leak");
+        }
+    }
+
+
+    fn measure_post_likes_storage_usage(&mut self) {
+
+        let post_id = String::from("a".repeat(MIN_POST_ID_LEN));
+
+        let initial_storage_usage = env::storage_usage();
+
+        self.execute_like_post_call(
+            AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN)), 
+            post_id.clone()
+        );
+        let after_first_like_storage_usage = env::storage_usage();
+
+        self.execute_like_post_call(
+            AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN)), 
+            post_id.clone()
+        );
+        let after_second_like_storage_usage = env::storage_usage();
+
+        self.settings.min_post_like_storage_usage = after_second_like_storage_usage - after_first_like_storage_usage;
+        self.settings.post_likes_collection_storage_usage = after_first_like_storage_usage - initial_storage_usage - self.settings.min_post_like_storage_usage;
+
+        self.remove_post_likes_storage(&post_id);
+
+        let final_storage_usage = env::storage_usage();
+        if initial_storage_usage != final_storage_usage {
+            env::panic_str("Measurement of post likes storage aborted due to data leak");
+        }
+    }
+
+
+    fn measure_message_likes_storage_usage(&mut self) {
+
+        let msg_id = MessageId { post_id: String::from("a".repeat(MIN_POST_ID_LEN)), msg_idx: 1 };
+
+        let initial_storage_usage = env::storage_usage();
+
+        self.execute_like_message_call(
+            AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN)), 
+            msg_id.clone()
+        );
+        let after_first_like_storage_usage = env::storage_usage();
+
+        self.execute_like_message_call(
+            AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN)), 
+            msg_id.clone()
+        );
+        let after_second_like_storage_usage = env::storage_usage();
+
+        self.settings.min_message_like_storage_usage = after_second_like_storage_usage - after_first_like_storage_usage;
+        self.settings.message_likes_collection_storage_usage = after_first_like_storage_usage - initial_storage_usage - self.settings.min_message_like_storage_usage;
+
+        self.remove_post_message_likes_storage(&msg_id);
+
+        let final_storage_usage = env::storage_usage();
+        if initial_storage_usage != final_storage_usage {
+            env::panic_str("Measurement of message likes storage aborted due to data leak");
+        }
+    }
+
+
     fn collect_fee_and_execute_call(&mut self, call: Call) -> Promise {
         ext_ft::ext(self.fee_ft.clone())
             .with_static_gas(Gas(5*TGAS))
@@ -887,35 +969,37 @@ impl Contract {
             env::panic_str("Unexpected promise results count");
         }
 
+        let account_id = env::signer_account_id();
+
         match env::promise_result(0) {
             PromiseResult::Successful(_) => {
                 match call {
                     Call::AddMessageToPost { post_id, text } => {
-                        let (post_id, msg_idx) = self.execute_add_message_to_post_call(post_id, text);
+                        let (post_id, msg_idx) = self.execute_add_message_to_post_call(account_id, post_id, text);
                         CallResult::MessageToPostAdded { id: MessageID { post_id, msg_idx } }
                     },
                     Call::AddMessageToMessage { parent_msg_id, text } => {
-                        let (post_id, msg_idx) = self.execute_add_message_to_message_call(parent_msg_id.into(), text);
+                        let (post_id, msg_idx) = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
                         CallResult::MessageToMessageAdded { id: MessageID { post_id, msg_idx } }
                     },
                     Call::AddFriend { friend_id } => {
-                        self.execute_add_friend_call(friend_id);
+                        self.execute_add_friend_call(account_id, friend_id);
                         CallResult::FriendAdded
                     },
                     Call::LikePost { post_id } => {
-                        self.execute_like_post_call(post_id);
+                        self.execute_like_post_call(account_id, post_id);
                         CallResult::PostLiked
                     },
                     Call::UnlikePost { post_id } => {
-                        self.execute_unlike_post_call(post_id);
+                        self.execute_unlike_post_call(account_id, post_id);
                         CallResult::PostUnliked
                     },
                     Call::LikeMessage { msg_id } => {
-                        self.execute_like_message_call(msg_id.into());
+                        self.execute_like_message_call(account_id, msg_id.into());
                         CallResult::MessageLiked
                     },
                     Call::UnlikeMessage { msg_id } => {
-                        self.execute_unlike_message_call(msg_id.into());
+                        self.execute_unlike_message_call(account_id, msg_id.into());
                         CallResult::MessageUnliked
                     },
                     Call::UpdateProfile { profile } => {
@@ -923,7 +1007,7 @@ impl Contract {
                             Some(vec) => Some(vec.into()),
                             None => None
                         };
-                        self.execute_update_profile_call(profile.json_metadata, image);
+                        self.execute_update_profile_call(account_id, profile.json_metadata, image);
                         CallResult::ProfileUpdated
                     },
                 }
