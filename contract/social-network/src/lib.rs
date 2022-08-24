@@ -20,7 +20,7 @@ pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
     custom_settings: CustomSettings,
-    storage_settings: StorageSettings,
+    storage_usage_settings: StorageUsageSettings,
     posts_messages: LookupMap<PostId, Vector<Message>>,
     posts_likes: LookupMap<PostId, UnorderedSet<AccountId>>,
     posts_messages_likes: LookupMap<MessageId, UnorderedSet<AccountId>>,
@@ -91,20 +91,16 @@ pub struct CustomSettings {
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
 #[serde(crate = "near_sdk::serde")]
-pub struct StorageSettings {
-    min_message_storage_usage: StorageUsage,
-    messages_collection_storage_usage: StorageUsage,
-
-    min_post_like_storage_usage: StorageUsage,
-    post_likes_collection_storage_usage: StorageUsage,
-
-    min_message_like_storage_usage: StorageUsage,
-    message_likes_collection_storage_usage: StorageUsage,
-
-    min_account_friend_storage_usage: StorageUsage,
-    account_friends_collection_storage_usage: StorageUsage,
-
-    account_profile_storage_usage: StorageUsage
+pub struct StorageUsageSettings {
+    min_message_size: StorageUsage,
+    messages_collection_size: StorageUsage,
+    min_post_like_size: StorageUsage,
+    post_likes_collection_size: StorageUsage,
+    min_message_like_size: StorageUsage,
+    message_likes_collection_size: StorageUsage,
+    min_account_friend_size: StorageUsage,
+    account_friends_collection_size: StorageUsage,
+    min_account_profile_size: StorageUsage
 }
 
 impl PartialEq for AccountLike {
@@ -230,16 +226,16 @@ impl Contract {
                 None => 0
               },
             }, 
-            storage_settings: StorageSettings {
-                min_message_storage_usage: 0,
-                messages_collection_storage_usage: 0,
-                min_post_like_storage_usage: 0,
-                post_likes_collection_storage_usage: 0,
-                min_message_like_storage_usage: 0,
-                message_likes_collection_storage_usage: 0,
-                min_account_friend_storage_usage: 0,
-                account_friends_collection_storage_usage: 0,
-                account_profile_storage_usage: 0
+            storage_usage_settings: StorageUsageSettings {
+                min_message_size: 0,
+                messages_collection_size: 0,
+                min_post_like_size: 0,
+                post_likes_collection_size: 0,
+                min_message_like_size: 0,
+                message_likes_collection_size: 0,
+                min_account_friend_size: 0,
+                account_friends_collection_size: 0,
+                min_account_profile_size: 0
             },
             posts_messages: LookupMap::new(StorageKeys::PostsMessages),
             posts_likes: LookupMap::new(StorageKeys::PostsLikes),
@@ -249,8 +245,8 @@ impl Contract {
             accounts_stats: LookupMap::new(StorageKeys::AccountsStats)
         };
 
-        this.measure_storage_usage();
-        
+        this.update_storage_usage_settings();
+
         this
     }
 
@@ -456,8 +452,8 @@ impl Contract {
         self.custom_settings.clone()
     }
 
-    pub fn get_storage_settings(&self) -> StorageSettings {
-        self.storage_settings.clone()
+    pub fn get_storage_settings(&self) -> StorageUsageSettings {
+        self.storage_usage_settings.clone()
     }
 
 }
@@ -866,7 +862,7 @@ impl Contract {
 
     // Measure post storage usage
 
-    fn measure_storage_usage(&mut self) {
+    fn update_storage_usage_settings(&mut self) {
         self.measure_message_storage_usage();
         self.measure_post_likes_storage_usage();
         self.measure_message_likes_storage_usage();
@@ -896,8 +892,8 @@ impl Contract {
         );
         let after_second_message_storage_usage = env::storage_usage();
       
-        self.storage_settings.min_message_storage_usage = after_second_message_storage_usage - after_first_message_storage_usage;
-        self.storage_settings.messages_collection_storage_usage = after_first_message_storage_usage - initial_storage_usage - self.storage_settings.min_message_storage_usage;
+        self.storage_usage_settings.min_message_size = after_second_message_storage_usage - after_first_message_storage_usage;
+        self.storage_usage_settings.messages_collection_size = after_first_message_storage_usage - initial_storage_usage - self.storage_usage_settings.min_message_size;
 
         self.remove_post_messages_storage(&post_id);
 
@@ -927,8 +923,8 @@ impl Contract {
         );
         let after_second_post_like_storage_usage = env::storage_usage();
 
-        self.storage_settings.min_post_like_storage_usage = after_second_post_like_storage_usage - after_first_post_like_storage_usage;
-        self.storage_settings.post_likes_collection_storage_usage = after_first_post_like_storage_usage - initial_storage_usage - self.storage_settings.min_post_like_storage_usage;
+        self.storage_usage_settings.min_post_like_size = after_second_post_like_storage_usage - after_first_post_like_storage_usage;
+        self.storage_usage_settings.post_likes_collection_size = after_first_post_like_storage_usage - initial_storage_usage - self.storage_usage_settings.min_post_like_size;
 
         self.remove_post_likes_storage(&post_id);
         self.remove_account_stat_storage(&account_1);
@@ -960,8 +956,8 @@ impl Contract {
         );
         let after_second_message_like_storage_usage = env::storage_usage();
 
-        self.storage_settings.min_message_like_storage_usage = after_second_message_like_storage_usage - after_first_message_like_storage_usage;
-        self.storage_settings.message_likes_collection_storage_usage = after_first_message_like_storage_usage - initial_storage_usage - self.storage_settings.min_message_like_storage_usage;
+        self.storage_usage_settings.min_message_like_size = after_second_message_like_storage_usage - after_first_message_like_storage_usage;
+        self.storage_usage_settings.message_likes_collection_size = after_first_message_like_storage_usage - initial_storage_usage - self.storage_usage_settings.min_message_like_size;
 
         self.remove_post_message_likes_storage(&msg_id);
         self.remove_account_stat_storage(&account_1);
@@ -991,8 +987,8 @@ impl Contract {
         );
         let after_second_friend_storage_usage = env::storage_usage();
 
-        self.storage_settings.min_account_friend_storage_usage = after_second_friend_storage_usage - after_first_friend_storage_usage;
-        self.storage_settings.account_friends_collection_storage_usage = after_first_friend_storage_usage - initial_storage_usage - self.storage_settings.min_account_friend_storage_usage;
+        self.storage_usage_settings.min_account_friend_size = after_second_friend_storage_usage - after_first_friend_storage_usage;
+        self.storage_usage_settings.account_friends_collection_size = after_first_friend_storage_usage - initial_storage_usage - self.storage_usage_settings.min_account_friend_size;
 
         self.remove_account_friends_storage(&account_id);
 
@@ -1015,7 +1011,7 @@ impl Contract {
         );
         let after_profile_update_storage_usage = env::storage_usage();
 
-        self.storage_settings.account_profile_storage_usage = after_profile_update_storage_usage - initial_storage_usage;
+        self.storage_usage_settings.min_account_profile_size = after_profile_update_storage_usage - initial_storage_usage;
 
         self.remove_account_profile_storage(&account_id);
 
