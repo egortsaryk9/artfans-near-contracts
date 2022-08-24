@@ -214,6 +214,7 @@ pub struct MessageDTO {
 
 #[near_bindgen]
 impl Contract {
+
     #[init]
     pub fn new(owner: AccountId, fee_ft: AccountId, settings: CustomSettingsData) -> Self {
         if env::state_exists() == true {
@@ -397,7 +398,6 @@ impl Contract {
             Vec::new()
         }
     }
-    
     
     pub fn get_account_last_likes(&self, account_id: AccountId, from_index: u8, limit: u8) -> Vec<(PostId, Option<U64>)> {
         if let Some(accounts_stats) = self.accounts_stats.get(&account_id) {
@@ -590,123 +590,10 @@ impl Contract {
         self.assert_post_id(post_id);
     }
 
-    // Add storage collections
-
-    fn add_post_messages_storage(&mut self, post_id: &PostId) -> Vector<Message> {
-        let post_messages = Vector::new(
-            StorageKeys::PostMessages { 
-                post_id: env::sha256(post_id.as_bytes()) 
-            }
-        );
-
-        self.posts_messages.insert(post_id, &post_messages);
-
-        post_messages
-    }
-
-    fn remove_post_messages_storage(&mut self, post_id: &PostId) {
-        let mut post_messages = self.posts_messages.get(&post_id).expect("Post messages storage is not found");
-        post_messages.clear();
-        self.posts_messages.remove(&post_id);
-    }
-
-    fn add_post_likes_storage(&mut self, post_id: &PostId) -> UnorderedSet<AccountId> {
-        let post_likes = UnorderedSet::new(
-            StorageKeys::PostLikes {
-                post_id: env::sha256(post_id.as_bytes())
-            }
-        );
-
-        self.posts_likes.insert(post_id, &post_likes);
-
-        post_likes
-    }
-
-    fn remove_post_likes_storage(&mut self, post_id: &PostId) {
-        let mut post_likes = self.posts_likes.get(&post_id).expect("Post likes storage is not found");
-        post_likes.clear();
-        self.posts_likes.remove(&post_id);
-    }
-
-    fn add_post_message_likes_storage(&mut self, msg_id: &MessageId) -> UnorderedSet<AccountId> {
-        let post_message_likes = UnorderedSet::new(
-            StorageKeys::PostMessageLikes {
-                post_id: env::sha256(msg_id.post_id.as_bytes()),
-                msg_idx: msg_id.msg_idx 
-            }
-        );
-
-        self.posts_messages_likes.insert(&msg_id, &post_message_likes);
-
-        post_message_likes
-    }
-
-    fn remove_post_message_likes_storage(&mut self, msg_id: &MessageId) {
-        let mut post_message_likes = self.posts_messages_likes.get(&msg_id).expect("Messages likes storage is not found");
-        post_message_likes.clear();
-        self.posts_messages_likes.remove(&msg_id);
-    }
-
-    fn add_account_stat_storage(&mut self, account_id: &AccountId) -> AccountStats {
-        let account_stat = AccountStats {
-            recent_likes: Vec::new()
-        };
-
-        self.accounts_stats.insert(account_id, &account_stat);
-
-        account_stat
-    }
-
-    fn remove_account_stat_storage(&mut self, account_id: &AccountId) {
-        let mut account_stat = self.accounts_stats.get(&account_id).expect("Account stats storage is not found");
-        account_stat.recent_likes.clear();
-        self.accounts_stats.remove(&account_id);
-    }
-    
-    fn add_account_friends_storage(&mut self, account_id: &AccountId) -> UnorderedSet<AccountId> {
-       let account_friends = UnorderedSet::new(
-            StorageKeys::AccountFriends { 
-                account_id: env::sha256(account_id.as_bytes()) 
-            }
-        );
-
-        self.accounts_friends.insert(account_id, &account_friends);
-
-        account_friends
-    }
-
-    fn remove_account_friends_storage(&mut self, account_id: &AccountId) {
-        let mut account_friends = self.accounts_friends.get(&account_id).expect("Account friends storage is not found");
-        account_friends.clear();
-        self.accounts_friends.remove(&account_id);
-    }
-
-    fn add_account_profile_storage(&mut self, account_id: &AccountId) -> AccountProfile {
-        let account_profile = AccountProfile {
-            json_metadata: "".to_string(),
-            image: LazyOption::new(
-                StorageKeys::AccountProfileImage { 
-                    account_id: env::sha256(account_id.as_bytes()),
-                },
-                None
-            )
-        };
-        
-        self.accounts_profiles.insert(account_id, &account_profile);
-
-        account_profile
-    }
-
-    fn remove_account_profile_storage(&mut self, account_id: &AccountId) {
-        let mut account_profile = self.accounts_profiles.get(&account_id).expect("Account profile storage is not found");
-        account_profile.image.remove();
-        self.accounts_profiles.remove(&account_id);
-    }
 
     // Execute call logic
 
     fn execute_add_message_to_post_call(&mut self, account_id: AccountId, post_id: PostId, text: String) -> MessageID {
-        
         let mut post_messages = self.posts_messages.get(&post_id).unwrap_or_else(|| {
             self.add_post_messages_storage(&post_id)
         });
@@ -727,7 +614,6 @@ impl Contract {
     }
 
     fn execute_add_message_to_message_call(&mut self, account_id: AccountId, parent_msg_id: MessageId, text: String) -> MessageID {
-        
         let mut post_messages = self.posts_messages.get(&parent_msg_id.post_id).expect("Post is not found");
         
         let msg_idx = post_messages.len();
@@ -851,6 +737,114 @@ impl Contract {
     }
 
 
+    // Add storage collections
+
+    fn add_post_messages_storage(&mut self, post_id: &PostId) -> Vector<Message> {
+        let post_messages = Vector::new(
+            StorageKeys::PostMessages { 
+                post_id: env::sha256(post_id.as_bytes()) 
+            }
+        );
+
+        self.posts_messages.insert(post_id, &post_messages);
+        post_messages
+    }
+
+    fn remove_post_messages_storage(&mut self, post_id: &PostId) {
+        let mut post_messages = self.posts_messages.get(&post_id).expect("Post messages storage is not found");
+        post_messages.clear();
+        self.posts_messages.remove(&post_id);
+    }
+
+    fn add_post_likes_storage(&mut self, post_id: &PostId) -> UnorderedSet<AccountId> {
+        let post_likes = UnorderedSet::new(
+            StorageKeys::PostLikes {
+                post_id: env::sha256(post_id.as_bytes())
+            }
+        );
+
+        self.posts_likes.insert(post_id, &post_likes);
+        post_likes
+    }
+
+    fn remove_post_likes_storage(&mut self, post_id: &PostId) {
+        let mut post_likes = self.posts_likes.get(&post_id).expect("Post likes storage is not found");
+        post_likes.clear();
+        self.posts_likes.remove(&post_id);
+    }
+
+    fn add_post_message_likes_storage(&mut self, msg_id: &MessageId) -> UnorderedSet<AccountId> {
+        let post_message_likes = UnorderedSet::new(
+            StorageKeys::PostMessageLikes {
+                post_id: env::sha256(msg_id.post_id.as_bytes()),
+                msg_idx: msg_id.msg_idx 
+            }
+        );
+
+        self.posts_messages_likes.insert(&msg_id, &post_message_likes);
+        post_message_likes
+    }
+
+    fn remove_post_message_likes_storage(&mut self, msg_id: &MessageId) {
+        let mut post_message_likes = self.posts_messages_likes.get(&msg_id).expect("Messages likes storage is not found");
+        post_message_likes.clear();
+        self.posts_messages_likes.remove(&msg_id);
+    }
+
+    fn add_account_stat_storage(&mut self, account_id: &AccountId) -> AccountStats {
+        let account_stat = AccountStats {
+            recent_likes: Vec::new()
+        };
+
+        self.accounts_stats.insert(account_id, &account_stat);
+        account_stat
+    }
+
+    fn remove_account_stat_storage(&mut self, account_id: &AccountId) {
+        let mut account_stat = self.accounts_stats.get(&account_id).expect("Account stats storage is not found");
+        account_stat.recent_likes.clear();
+        self.accounts_stats.remove(&account_id);
+    }
+    
+    fn add_account_friends_storage(&mut self, account_id: &AccountId) -> UnorderedSet<AccountId> {
+       let account_friends = UnorderedSet::new(
+            StorageKeys::AccountFriends { 
+                account_id: env::sha256(account_id.as_bytes()) 
+            }
+        );
+
+        self.accounts_friends.insert(account_id, &account_friends);
+        account_friends
+    }
+
+    fn remove_account_friends_storage(&mut self, account_id: &AccountId) {
+        let mut account_friends = self.accounts_friends.get(&account_id).expect("Account friends storage is not found");
+        account_friends.clear();
+        self.accounts_friends.remove(&account_id);
+    }
+
+    fn add_account_profile_storage(&mut self, account_id: &AccountId) -> AccountProfile {
+        let account_profile = AccountProfile {
+            json_metadata: "".to_string(),
+            image: LazyOption::new(
+                StorageKeys::AccountProfileImage { 
+                    account_id: env::sha256(account_id.as_bytes()),
+                },
+                None
+            )
+        };
+        
+        self.accounts_profiles.insert(account_id, &account_profile);
+        account_profile
+    }
+
+    fn remove_account_profile_storage(&mut self, account_id: &AccountId) {
+        let mut account_profile = self.accounts_profiles.get(&account_id).expect("Account profile storage is not found");
+        account_profile.image.remove();
+        self.accounts_profiles.remove(&account_id);
+    }
+
+
     // Measure post storage usage
 
     fn update_storage_usage_settings(&mut self) {
@@ -863,7 +857,6 @@ impl Contract {
     }
 
     fn measure_message_storage_usage(&mut self) {
-
         let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
         let post_id = String::from("a".repeat(MIN_POST_ID_LEN));
         let text = String::from("a".repeat(MIN_POST_MESSAGE_LEN));
@@ -896,7 +889,6 @@ impl Contract {
     }
 
     fn measure_post_likes_storage_usage(&mut self) {
-
         let post_id = String::from("a".repeat(MIN_POST_ID_LEN));
         let account_1 = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
         let account_2 = AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN));
@@ -927,7 +919,6 @@ impl Contract {
     }
 
     fn measure_message_likes_storage_usage(&mut self) {
-
         let msg_id = MessageId { post_id: String::from("a".repeat(MIN_POST_ID_LEN)), msg_idx: 1 };
         let account_1 = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
         let account_2 = AccountId::new_unchecked("b".repeat(MIN_ACCOUNT_ID_LEN));
@@ -958,7 +949,6 @@ impl Contract {
     }
 
     fn measure_account_likes_stat_storage_usage(&mut self) {
-
         let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
 
         let initial_storage_usage = env::storage_usage();
@@ -987,7 +977,6 @@ impl Contract {
     }
 
     fn measure_account_friends_storage_usage(&mut self) {
-
         let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
 
         let initial_storage_usage = env::storage_usage();
@@ -1016,7 +1005,6 @@ impl Contract {
     }
 
     fn measure_account_profile_storage_usage(&mut self) {
-
         let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
 
         let initial_storage_usage = env::storage_usage();
