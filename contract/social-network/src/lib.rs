@@ -5,7 +5,7 @@ use near_sdk::collections::{LookupMap, Vector, UnorderedSet, LazyOption};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json;
 use near_sdk::serde_json::{Result, Value};
-use std::convert::{From, TryFrom};
+use std::convert::From;
 
 pub mod external;
 pub use crate::external::*;
@@ -100,7 +100,9 @@ pub struct StorageUsageSettings {
     message_likes_collection_size: StorageUsage,
     min_account_friend_size: StorageUsage,
     account_friends_collection_size: StorageUsage,
-    min_account_profile_size: StorageUsage
+    min_account_profile_size: StorageUsage,
+    min_account_stat_like_size: StorageUsage,
+    account_stat_likes_collection_size: StorageUsage
 }
 
 impl PartialEq for AccountLike {
@@ -235,7 +237,9 @@ impl Contract {
                 message_likes_collection_size: 0,
                 min_account_friend_size: 0,
                 account_friends_collection_size: 0,
-                min_account_profile_size: 0
+                min_account_profile_size: 0,
+                min_account_stat_like_size: 0,
+                account_stat_likes_collection_size: 0
             },
             posts_messages: LookupMap::new(StorageKeys::PostsMessages),
             posts_likes: LookupMap::new(StorageKeys::PostsLikes),
@@ -740,53 +744,40 @@ impl Contract {
         msg_id.into()
     }
     
-    fn execute_like_post_call(&mut self, account_id: AccountId, post_id: PostId) {
-        // Update post stats
+    fn execute_like_post_call(&mut self, account_id: AccountId, post_id: PostId) -> AccountLike {
         let mut post_likes = self.posts_likes.get(&post_id).unwrap_or_else(|| {
             self.add_post_likes_storage(&post_id)
         });
         post_likes.insert(&account_id);
         self.posts_likes.insert(&post_id, &post_likes);
 
-        // Update account stats
-        let like = AccountLike::PostLike { post_id };
-        self.add_like_to_account_likes_stat(account_id, like);
+        AccountLike::PostLike { post_id }
     }
 
-    fn execute_unlike_post_call(&mut self, account_id: AccountId, post_id: PostId) {
-        // Update post stats
+    fn execute_unlike_post_call(&mut self, account_id: AccountId, post_id: PostId) -> AccountLike {
         let mut post_likes = self.posts_likes.get(&post_id).expect("Post like is not found");
         post_likes.remove(&account_id);                
         self.posts_likes.insert(&post_id, &post_likes);
 
-        // Update account stats
-        let like = AccountLike::PostLike { post_id };
-        self.remove_like_from_account_likes_stat(account_id, like);
+        AccountLike::PostLike { post_id }
     }
 
-    fn execute_like_message_call(&mut self, account_id: AccountId, msg_id: MessageId) {
-        // Update message stats
+    fn execute_like_message_call(&mut self, account_id: AccountId, msg_id: MessageId) -> AccountLike {
         let mut post_message_likes = self.posts_messages_likes.get(&msg_id).unwrap_or_else(|| {
             self.add_post_message_likes_storage(&msg_id)
         });
         post_message_likes.insert(&account_id);
         self.posts_messages_likes.insert(&msg_id, &post_message_likes);
 
-        // Update account stats
-        let like = AccountLike::MessageLike { msg_id };
-        self.add_like_to_account_likes_stat(account_id, like);
+        AccountLike::MessageLike { msg_id }
     }
 
-    fn execute_unlike_message_call(&mut self, account_id: AccountId, msg_id: MessageId) {
-        // Update message stats
+    fn execute_unlike_message_call(&mut self, account_id: AccountId, msg_id: MessageId) -> AccountLike  {
         let mut post_message_likes = self.posts_messages_likes.get(&msg_id).expect("Message like is not found");
         post_message_likes.remove(&account_id);
-
         self.posts_messages_likes.insert(&msg_id, &post_message_likes);
 
-        // Update account stats
-        let like = AccountLike::MessageLike { msg_id };
-        self.remove_like_from_account_likes_stat(account_id, like);
+        AccountLike::MessageLike { msg_id }
     }
 
     fn execute_add_friend_call(&mut self, account_id: AccountId, friend_id: AccountId) {
@@ -868,6 +859,7 @@ impl Contract {
         self.measure_message_likes_storage_usage();
         self.measure_account_friends_storage_usage();
         self.measure_account_profile_storage_usage();
+        self.measure_account_likes_stat_storage_usage()
     }
 
     fn measure_message_storage_usage(&mut self) {
@@ -927,8 +919,6 @@ impl Contract {
         self.storage_usage_settings.post_likes_collection_size = after_first_post_like_storage_usage - initial_storage_usage - self.storage_usage_settings.min_post_like_size;
 
         self.remove_post_likes_storage(&post_id);
-        self.remove_account_stat_storage(&account_1);
-        self.remove_account_stat_storage(&account_2);
 
         let final_storage_usage = env::storage_usage();
         if initial_storage_usage != final_storage_usage {
@@ -960,12 +950,39 @@ impl Contract {
         self.storage_usage_settings.message_likes_collection_size = after_first_message_like_storage_usage - initial_storage_usage - self.storage_usage_settings.min_message_like_size;
 
         self.remove_post_message_likes_storage(&msg_id);
-        self.remove_account_stat_storage(&account_1);
-        self.remove_account_stat_storage(&account_2);
 
         let final_storage_usage = env::storage_usage();
         if initial_storage_usage != final_storage_usage {
             env::panic_str("Measurement of message likes storage aborted due to data leak");
+        }
+    }
+
+    fn measure_account_likes_stat_storage_usage(&mut self) {
+
+        let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
+
+        let initial_storage_usage = env::storage_usage();
+
+        self.add_like_to_account_likes_stat(
+            account_id.clone(), 
+            AccountLike::PostLike { post_id: String::from("a".repeat(MIN_POST_ID_LEN)) }
+        );
+        let after_first_account_like_storage_usage = env::storage_usage();
+
+        self.add_like_to_account_likes_stat(
+            account_id.clone(), 
+            AccountLike::PostLike { post_id: String::from("b".repeat(MIN_POST_ID_LEN)) }
+        );
+        let after_second_account_like_storage_usage = env::storage_usage();
+
+        self.storage_usage_settings.min_account_stat_like_size = after_second_account_like_storage_usage - after_first_account_like_storage_usage;
+        self.storage_usage_settings.account_stat_likes_collection_size = after_first_account_like_storage_usage - initial_storage_usage - self.storage_usage_settings.min_account_stat_like_size;
+
+        self.remove_account_stat_storage(&account_id);
+
+        let final_storage_usage = env::storage_usage();
+        if initial_storage_usage != final_storage_usage {
+            env::panic_str("Measurement of account stat likes storage aborted due to data leak");
         }
     }
 
@@ -1055,19 +1072,23 @@ impl Contract {
                         serde_json::to_string(&msg_id).ok()
                     },
                     Call::LikePost { post_id } => {
-                        self.execute_like_post_call(account_id, post_id);
+                        let like = self.execute_like_post_call(account_id.clone(), post_id);
+                        self.add_like_to_account_likes_stat(account_id, like);
                         None
                     },
                     Call::UnlikePost { post_id } => {
-                        self.execute_unlike_post_call(account_id, post_id);
+                        let like = self.execute_unlike_post_call(account_id.clone(), post_id);
+                        self.remove_like_from_account_likes_stat(account_id, like);
                         None
                     },
                     Call::LikeMessage { msg_id } => {
-                        self.execute_like_message_call(account_id, msg_id.into());
+                        let like = self.execute_like_message_call(account_id.clone(), msg_id.into());
+                        self.add_like_to_account_likes_stat(account_id, like);
                         None
                     },
                     Call::UnlikeMessage { msg_id } => {
-                        self.execute_unlike_message_call(account_id, msg_id.into());
+                        let like = self.execute_unlike_message_call(account_id.clone(), msg_id.into());
+                        self.remove_like_from_account_likes_stat(account_id, like);
                         None
                     },
                     Call::AddFriend { friend_id } => {
