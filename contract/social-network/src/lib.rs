@@ -248,11 +248,9 @@ impl Contract {
             accounts_profiles: LookupMap::new(StorageKeys::AccountsProfiles),
             accounts_stats: LookupMap::new(StorageKeys::AccountsStats)
         };
-        this.measure_message_storage_usage();
-        this.measure_post_likes_storage_usage();
-        this.measure_message_likes_storage_usage();
-        this.measure_account_friends_storage_usage();
-        this.measure_account_profile_storage_usage();
+
+        this.measure_storage_usage();
+        
         this
     }
 
@@ -867,6 +865,14 @@ impl Contract {
 
 
     // Measure post storage usage
+
+    fn measure_storage_usage(&mut self) {
+        self.measure_message_storage_usage();
+        self.measure_post_likes_storage_usage();
+        self.measure_message_likes_storage_usage();
+        self.measure_account_friends_storage_usage();
+        self.measure_account_profile_storage_usage();
+    }
 
     fn measure_message_storage_usage(&mut self) {
 
