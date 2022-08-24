@@ -578,10 +578,13 @@ impl Contract {
     }
     
     fn assert_post_id(&self, post_id: &PostId) {
-        // TODO: validate 'post_id' format and length
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
         };
+
+        if post_id.len() < MIN_POST_ID_LEN {
+            env::panic_str("'post_id' length is too small");
+        }
     }
 
     fn assert_message_id(&self, msg_id: &MessageID) {
