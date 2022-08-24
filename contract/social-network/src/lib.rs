@@ -144,7 +144,7 @@ pub enum Call {
     UpdateProfile { profile: AccountProfileData }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct MessageID {
     post_id: PostId,
@@ -263,13 +263,17 @@ impl Contract {
     }
 
     pub fn add_message_to_message(&mut self, parent_msg_id: MessageID, text: String) -> Promise {
+        let account_id = env::signer_account_id();
         self.assert_add_message_to_message_call(&parent_msg_id, &text);
-        self.collect_fee_and_execute_call(FIXED_FEE, Call::AddMessageToMessage { parent_msg_id, text })
+        let fee = self.calc_add_message_to_message_fee(&account_id, &parent_msg_id, &text);
+        self.collect_fee_and_execute_call(fee, Call::AddMessageToMessage { parent_msg_id, text })
     }
 
     pub fn like_post(&mut self, post_id: PostId) -> Promise {
+        let account_id = env::signer_account_id();
         self.assert_like_post_call(&post_id);
-        self.collect_fee_and_execute_call(FIXED_FEE, Call::LikePost { post_id })
+        let fee = self.calc_like_post_fee(&account_id, &post_id);
+        self.collect_fee_and_execute_call(fee, Call::LikePost { post_id })
     }
 
     pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
@@ -278,8 +282,10 @@ impl Contract {
     }
 
     pub fn like_message(&mut self, msg_id: MessageID) -> Promise {
+        let account_id = env::signer_account_id();
         self.assert_like_message_call(&msg_id);
-        self.collect_fee_and_execute_call(FIXED_FEE, Call::LikeMessage { msg_id })
+        let fee = self.calc_like_message_fee(&account_id, &msg_id);
+        self.collect_fee_and_execute_call(fee, Call::LikeMessage { msg_id })
     }
 
     pub fn unlike_message(&mut self, msg_id: MessageID) -> Promise {
@@ -594,17 +600,73 @@ impl Contract {
 
     fn calc_add_message_to_post_fee(&mut self, account_id: &AccountId, post_id: &PostId, text: &String) -> u128 {
         let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
         let text_extra_bytes = u64::try_from(text.len() - MIN_POST_MESSAGE_LEN).unwrap();
-        let mut storage_size = self.storage_usage_settings.min_message_size + account_extra_bytes + text_extra_bytes;
-
-        if !self.posts_messages.contains_key(post_id) {
-            storage_size += self.storage_usage_settings.messages_collection_size;
+        let collection_bytes = match self.posts_messages.contains_key(post_id) {
+            false => self.storage_usage_settings.messages_collection_size,
+            true => 0u64
         };
-        
+
+        let storage_size = self.storage_usage_settings.min_message_size 
+          + account_extra_bytes 
+          + text_extra_bytes 
+          + post_id_extra_bytes
+          + collection_bytes;
+
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
     }
 
+    fn calc_add_message_to_message_fee(&mut self, account_id: &AccountId, msg_id: &MessageID, text: &String) -> u128 {
+        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let post_id_extra_bytes = u64::try_from(msg_id.post_id.len() - MIN_POST_ID_LEN).unwrap();
+        let text_extra_bytes = u64::try_from(text.len() - MIN_POST_MESSAGE_LEN).unwrap();
+        let msg_idx_bytes = 8u64;
+        
+        let storage_size = self.storage_usage_settings.min_message_size 
+          + account_extra_bytes 
+          + text_extra_bytes 
+          + post_id_extra_bytes
+          + msg_idx_bytes;
+
+        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
+        storage_fee.into()
+    }
+
+    fn calc_like_post_fee(&mut self, account_id: &AccountId, post_id: &PostId) -> u128 {
+        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
+        let collection_bytes = match self.posts_likes.contains_key(post_id) {
+            false => self.storage_usage_settings.post_likes_collection_size,
+            true => 0u64
+        };
+        
+        let storage_size = self.storage_usage_settings.min_post_like_size 
+          + account_extra_bytes 
+          + post_id_extra_bytes
+          + collection_bytes;
+
+        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
+        storage_fee.into()
+    }
+
+    fn calc_like_message_fee(&mut self, account_id: &AccountId, msg_id: &MessageID) -> u128 {
+        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let post_id_extra_bytes = u64::try_from(msg_id.post_id.len() - MIN_POST_ID_LEN).unwrap();
+        let collection_bytes = match self.posts_messages_likes.contains_key(&msg_id.clone().into()) {
+            false => self.storage_usage_settings.message_likes_collection_size,
+            true => 0u64
+        };
+        
+        let storage_size = self.storage_usage_settings.min_message_like_size 
+          + account_extra_bytes 
+          + post_id_extra_bytes
+          + collection_bytes;
+
+        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
+        storage_fee.into()
+    }
+    
     // Execute call logic
 
     fn execute_add_message_to_post_call(&mut self, account_id: AccountId, post_id: PostId, text: String) -> MessageID {
