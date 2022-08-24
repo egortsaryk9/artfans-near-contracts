@@ -1,11 +1,11 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{env, near_bindgen, log, AccountId, Gas, Promise, PanicOnDefault, PromiseResult, StorageUsage, BorshStorageKey};
+use near_sdk::{env, near_bindgen, log, Balance, AccountId, Gas, Promise, PanicOnDefault, PromiseResult, StorageUsage, BorshStorageKey};
 use near_sdk::json_types::{U128, U64, Base64VecU8};
 use near_sdk::collections::{LookupMap, Vector, UnorderedSet, LazyOption};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json;
 use near_sdk::serde_json::{Result, Value};
-use std::convert::From;
+use std::convert::{From, TryFrom};
 
 pub mod external;
 pub use crate::external::*;
@@ -256,43 +256,45 @@ impl Contract {
     }
 
     pub fn add_message_to_post(&mut self, post_id: PostId, text: String) -> Promise {
+        let account_id = env::signer_account_id();
         self.assert_add_message_to_post_call(&post_id, &text);
-        self.collect_fee_and_execute_call(Call::AddMessageToPost { post_id, text })
+        let fee = self.calc_add_message_to_post_fee(&account_id, &post_id, &text);
+        self.collect_fee_and_execute_call(fee, Call::AddMessageToPost { post_id, text })
     }
 
     pub fn add_message_to_message(&mut self, parent_msg_id: MessageID, text: String) -> Promise {
         self.assert_add_message_to_message_call(&parent_msg_id, &text);
-        self.collect_fee_and_execute_call(Call::AddMessageToMessage { parent_msg_id, text })
+        self.collect_fee_and_execute_call(FIXED_FEE, Call::AddMessageToMessage { parent_msg_id, text })
     }
 
     pub fn like_post(&mut self, post_id: PostId) -> Promise {
         self.assert_like_post_call(&post_id);
-        self.collect_fee_and_execute_call(Call::LikePost { post_id })
+        self.collect_fee_and_execute_call(FIXED_FEE, Call::LikePost { post_id })
     }
 
     pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
         self.assert_unlike_post_call(&post_id);
-        self.collect_fee_and_execute_call(Call::UnlikePost { post_id })
+        self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikePost { post_id })
     }
 
     pub fn like_message(&mut self, msg_id: MessageID) -> Promise {
         self.assert_like_message_call(&msg_id);
-        self.collect_fee_and_execute_call(Call::LikeMessage { msg_id })
+        self.collect_fee_and_execute_call(FIXED_FEE, Call::LikeMessage { msg_id })
     }
 
     pub fn unlike_message(&mut self, msg_id: MessageID) -> Promise {
         self.assert_unlike_message_call(&msg_id);
-        self.collect_fee_and_execute_call(Call::UnlikeMessage { msg_id })
+        self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikeMessage { msg_id })
     }
 
     pub fn add_friend(&mut self, friend_id: AccountId) -> Promise {
         self.assert_add_friend_call(&friend_id);
-        self.collect_fee_and_execute_call(Call::AddFriend { friend_id })
+        self.collect_fee_and_execute_call(FIXED_FEE, Call::AddFriend { friend_id })
     }
 
     pub fn update_profile(&mut self, profile: AccountProfileData) -> Promise {
         self.assert_update_profile_call(&profile);
-        self.collect_fee_and_execute_call(Call::UpdateProfile { profile })
+        self.collect_fee_and_execute_call(FIXED_FEE, Call::UpdateProfile { profile })
     }
 
     pub fn update_settings(&mut self, settings: CustomSettingsData) {
@@ -476,7 +478,7 @@ impl Contract {
         
         if text.len() < MIN_POST_MESSAGE_LEN {
             env::panic_str("'text' length is too small");
-        }
+        };
 
         self.assert_post_id(post_id);
     }
@@ -488,7 +490,7 @@ impl Contract {
 
         if text.len() < MIN_POST_MESSAGE_LEN {
             env::panic_str("'text' length is too small");
-        }
+        };
 
         self.assert_message_id(parent_msg_id);
 
@@ -590,6 +592,18 @@ impl Contract {
         self.assert_post_id(post_id);
     }
 
+    fn calc_add_message_to_post_fee(&mut self, account_id: &AccountId, post_id: &PostId, text: &String) -> u128 {
+        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let text_extra_bytes = u64::try_from(text.len() - MIN_POST_MESSAGE_LEN).unwrap();
+        let mut storage_size = self.storage_usage_settings.min_message_size + account_extra_bytes + text_extra_bytes;
+
+        if !self.posts_messages.contains_key(post_id) {
+            storage_size += self.storage_usage_settings.messages_collection_size;
+        };
+        
+        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
+        storage_fee.into()
+    }
 
     // Execute call logic
 
@@ -1027,10 +1041,10 @@ impl Contract {
     }
 
 
-    fn collect_fee_and_execute_call(&mut self, call: Call) -> Promise {
+    fn collect_fee_and_execute_call(&mut self, fee: u128, call: Call) -> Promise {
         ext_ft::ext(self.fee_ft.clone())
             .with_static_gas(Gas(5*TGAS))
-            .ft_collect_fee(U128::from(FIXED_FEE))
+            .ft_collect_fee(U128::from(fee))
                 .then(
                     ext_self::ext(env::current_account_id())
                     .with_static_gas(Gas(5*TGAS))
