@@ -859,7 +859,7 @@ impl Contract {
         self.measure_message_likes_storage_usage();
         self.measure_account_friends_storage_usage();
         self.measure_account_profile_storage_usage();
-        self.measure_account_likes_stat_storage_usage()
+        self.measure_account_likes_stat_storage_usage();
     }
 
     fn measure_message_storage_usage(&mut self) {
