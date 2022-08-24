@@ -45,6 +45,23 @@ pub enum StorageKeys {
     AccountProfileImage { account_id: Vec<u8> },
 }
 
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct StorageUsageSettings {
+    min_message_size: StorageUsage,
+    messages_collection_size: StorageUsage,
+    min_post_like_size: StorageUsage,
+    post_likes_collection_size: StorageUsage,
+    min_message_like_size: StorageUsage,
+    message_likes_collection_size: StorageUsage,
+    min_account_friend_size: StorageUsage,
+    account_friends_collection_size: StorageUsage,
+    min_account_profile_size: StorageUsage,
+    min_account_stat_like_size: StorageUsage,
+    account_stat_likes_collection_size: StorageUsage
+}
+
 type PostId = String;
 
 #[derive(BorshSerialize, BorshDeserialize, Clone)]
@@ -87,22 +104,6 @@ pub struct AccountProfile {
 #[serde(crate = "near_sdk::serde")]
 pub struct CustomSettings {
     account_recent_likes_limit: u8,
-}
-
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
-#[serde(crate = "near_sdk::serde")]
-pub struct StorageUsageSettings {
-    min_message_size: StorageUsage,
-    messages_collection_size: StorageUsage,
-    min_post_like_size: StorageUsage,
-    post_likes_collection_size: StorageUsage,
-    min_message_like_size: StorageUsage,
-    message_likes_collection_size: StorageUsage,
-    min_account_friend_size: StorageUsage,
-    account_friends_collection_size: StorageUsage,
-    min_account_profile_size: StorageUsage,
-    min_account_stat_like_size: StorageUsage,
-    account_stat_likes_collection_size: StorageUsage
 }
 
 impl PartialEq for AccountLike {
@@ -286,7 +287,7 @@ impl Contract {
         let account_id = env::signer_account_id();
         self.assert_like_message_call(&msg_id);
         let fee = self.calc_like_message_fee(&account_id, &msg_id)
-          + self.calc_account_stats_fee(&account_id, &msg_id.post_id);
+            + self.calc_account_stats_fee(&account_id, &msg_id.post_id);
         self.collect_fee_and_execute_call(fee, Call::LikeMessage { msg_id })
     }
 
@@ -296,8 +297,10 @@ impl Contract {
     }
 
     pub fn add_friend(&mut self, friend_id: AccountId) -> Promise {
+        let account_id = env::signer_account_id();
         self.assert_add_friend_call(&friend_id);
-        self.collect_fee_and_execute_call(FIXED_FEE, Call::AddFriend { friend_id })
+        let fee = self.calc_add_friend_fee(&account_id, &friend_id);
+        self.collect_fee_and_execute_call(fee, Call::AddFriend { friend_id })
     }
 
     pub fn update_profile(&mut self, profile: AccountProfileData) -> Promise {
@@ -600,6 +603,9 @@ impl Contract {
         self.assert_post_id(post_id);
     }
 
+
+    // Calculate call fee
+
     fn calc_add_message_to_post_fee(&mut self, account_id: &AccountId, post_id: &PostId, text: &String) -> u128 {
         let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
         let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
@@ -684,6 +690,23 @@ impl Contract {
         let storage_size = self.storage_usage_settings.min_account_stat_like_size 
           + account_extra_bytes 
           + post_id_extra_bytes
+          + collection_bytes;
+
+        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
+        storage_fee.into()
+    }
+
+    fn calc_add_friend_fee(&mut self, account_id: &AccountId, friend_id: &AccountId) -> u128 {
+        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let friend_id_extra_bytes = u64::try_from(friend_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let collection_bytes = match self.accounts_friends.contains_key(&account_id) {
+            false => self.storage_usage_settings.account_friends_collection_size,
+            true => 0u64
+        };
+
+        let storage_size = self.storage_usage_settings.min_account_friend_size 
+          + account_extra_bytes 
+          + friend_id_extra_bytes
           + collection_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
