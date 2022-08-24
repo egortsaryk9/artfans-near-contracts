@@ -217,6 +217,23 @@ impl From<&MessageID> for MessageId {
     }
 }
 
+impl From<MessageId> for MessageID {
+    fn from(v: MessageId) -> Self {
+        MessageID {
+            post_id: v.post_id, 
+            msg_idx: U64(v.msg_idx) 
+        }
+    }
+}
+
+impl From<&MessageId> for MessageID {
+    fn from(v: &MessageId) -> Self {
+        MessageID {
+            post_id: v.post_id.clone(), 
+            msg_idx: U64(v.msg_idx) 
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
@@ -733,7 +750,7 @@ impl Contract {
 
     // Execute call logic
 
-    fn execute_add_message_to_post_call(&mut self, account_id: AccountId, post_id: PostId, text: String) -> (PostId, U64) {
+    fn execute_add_message_to_post_call(&mut self, account_id: AccountId, post_id: PostId, text: String) -> MessageID {
         
         let mut post_messages = self.posts_messages.get(&post_id).unwrap_or_else(|| {
             self.add_post_messages_storage(&post_id)
@@ -750,10 +767,11 @@ impl Contract {
         post_messages.push(&msg);
         self.posts_messages.insert(&post_id, &post_messages);
 
-        (post_id, U64(msg_idx))
+        let msg_id = MessageId { post_id, msg_idx };
+        msg_id.into()
     }
 
-    fn execute_add_message_to_message_call(&mut self, account_id: AccountId, parent_msg_id: MessageId, text: String) -> (PostId, U64) {
+    fn execute_add_message_to_message_call(&mut self, account_id: AccountId, parent_msg_id: MessageId, text: String) -> MessageID {
         
         let mut post_messages = self.posts_messages.get(&parent_msg_id.post_id).expect("Post is not found");
         
@@ -767,7 +785,8 @@ impl Contract {
         post_messages.push(&msg);
         self.posts_messages.insert(&parent_msg_id.post_id, &post_messages);
 
-        (parent_msg_id.post_id, U64(msg_idx))
+        let msg_id = MessageId { post_id: parent_msg_id.post_id, msg_idx };
+        msg_id.into()
     }
     
     fn execute_like_post_call(&mut self, account_id: AccountId, post_id: PostId) {
@@ -1069,12 +1088,12 @@ impl Contract {
             PromiseResult::Successful(_) => {
                 match call {
                     Call::AddMessageToPost { post_id, text } => {
-                        let (post_id, msg_idx) = self.execute_add_message_to_post_call(account_id, post_id, text);
-                        CallResult::MessageToPostAdded { id: MessageID { post_id, msg_idx } }
+                        let id = self.execute_add_message_to_post_call(account_id, post_id, text);
+                        CallResult::MessageToPostAdded { id }
                     },
                     Call::AddMessageToMessage { parent_msg_id, text } => {
-                        let (post_id, msg_idx) = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
-                        CallResult::MessageToMessageAdded { id: MessageID { post_id, msg_idx } }
+                        let id = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
+                        CallResult::MessageToMessageAdded { id }
                     },
                     Call::LikePost { post_id } => {
                         self.execute_like_post_call(account_id, post_id);
