@@ -272,7 +272,8 @@ impl Contract {
     pub fn like_post(&mut self, post_id: PostId) -> Promise {
         let account_id = env::signer_account_id();
         self.assert_like_post_call(&post_id);
-        let fee = self.calc_like_post_fee(&account_id, &post_id);
+        let fee = self.calc_like_post_fee(&account_id, &post_id) 
+            + self.calc_account_stats_fee(&account_id, &post_id);
         self.collect_fee_and_execute_call(fee, Call::LikePost { post_id })
     }
 
@@ -284,7 +285,8 @@ impl Contract {
     pub fn like_message(&mut self, msg_id: MessageID) -> Promise {
         let account_id = env::signer_account_id();
         self.assert_like_message_call(&msg_id);
-        let fee = self.calc_like_message_fee(&account_id, &msg_id);
+        let fee = self.calc_like_message_fee(&account_id, &msg_id)
+          + self.calc_account_stats_fee(&account_id, &msg_id.post_id);
         self.collect_fee_and_execute_call(fee, Call::LikeMessage { msg_id })
     }
 
@@ -666,6 +668,27 @@ impl Contract {
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
     }
+
+    fn calc_account_stats_fee(&mut self, account_id: &AccountId, post_id: &PostId) -> u128 {
+        if self.custom_settings.account_recent_likes_limit == 0 {
+            return 0
+        }
+
+        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
+        let collection_bytes = match self.accounts_stats.contains_key(&account_id) {
+            false => self.storage_usage_settings.account_stat_likes_collection_size,
+            true => 0u64
+        };
+
+        let storage_size = self.storage_usage_settings.min_account_stat_like_size 
+          + account_extra_bytes 
+          + post_id_extra_bytes
+          + collection_bytes;
+
+        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
+        storage_fee.into()
+    }
     
     // Execute call logic
 
@@ -1035,9 +1058,10 @@ impl Contract {
         );
         let after_first_account_like_storage_usage = env::storage_usage();
 
+        let msg_id = MessageId { post_id: String::from("a".repeat(MIN_POST_ID_LEN)), msg_idx: 1 };
         self.add_like_to_account_likes_stat(
             account_id.clone(), 
-            AccountLike::PostLike { post_id: String::from("b".repeat(MIN_POST_ID_LEN)) }
+            AccountLike::MessageLike { msg_id }
         );
         let after_second_account_like_storage_usage = env::storage_usage();
 
