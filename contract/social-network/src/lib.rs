@@ -148,52 +148,6 @@ pub enum Call {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub enum CallResult {
-    MessageToPostAdded { id: MessageID },
-    MessageToMessageAdded { id: MessageID },
-    FriendAdded,
-    PostLiked,
-    PostUnliked,
-    MessageLiked,
-    MessageUnliked,
-    ProfileUpdated
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub enum AddMessageFailure {}
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub enum LikePostFailure {
-    PostIsLikedAlready
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub enum UnlikePostFailure {
-    PostIsNotFound,
-    PostIsNotLikedYet
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub enum LikeMessageFailure {
-    PostIsNotFound,
-    MessageIsNotFound,
-    MessageIsLikedAlready
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub enum UnlikeMessageFailure {
-    PostIsNotFound,
-    MessageIsNotFound,
-    MessageIsNotLikedYet
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
 pub struct MessageID {
     post_id: PostId,
     msg_idx: U64
@@ -1076,7 +1030,7 @@ impl Contract {
 
 
     #[private]
-    pub fn on_fee_collected(&mut self, call: Call) -> CallResult {
+    pub fn on_fee_collected(&mut self, call: Call) -> Option<String> {
 
         if env::promise_results_count() != 1 {
             env::panic_str("Unexpected promise results count");
@@ -1088,32 +1042,32 @@ impl Contract {
             PromiseResult::Successful(_) => {
                 match call {
                     Call::AddMessageToPost { post_id, text } => {
-                        let id = self.execute_add_message_to_post_call(account_id, post_id, text);
-                        CallResult::MessageToPostAdded { id }
+                        let msg_id = self.execute_add_message_to_post_call(account_id, post_id, text);
+                        serde_json::to_string(&msg_id).ok()
                     },
                     Call::AddMessageToMessage { parent_msg_id, text } => {
-                        let id = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
-                        CallResult::MessageToMessageAdded { id }
+                        let msg_id = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
+                        serde_json::to_string(&msg_id).ok()
                     },
                     Call::LikePost { post_id } => {
                         self.execute_like_post_call(account_id, post_id);
-                        CallResult::PostLiked
+                        None
                     },
                     Call::UnlikePost { post_id } => {
                         self.execute_unlike_post_call(account_id, post_id);
-                        CallResult::PostUnliked
+                        None
                     },
                     Call::LikeMessage { msg_id } => {
                         self.execute_like_message_call(account_id, msg_id.into());
-                        CallResult::MessageLiked
+                        None
                     },
                     Call::UnlikeMessage { msg_id } => {
                         self.execute_unlike_message_call(account_id, msg_id.into());
-                        CallResult::MessageUnliked
+                        None
                     },
                     Call::AddFriend { friend_id } => {
                         self.execute_add_friend_call(account_id, friend_id);
-                        CallResult::FriendAdded
+                        None
                     },
                     Call::UpdateProfile { profile } => {
                         let image: Option<Vec<u8>> = match profile.image {
@@ -1121,7 +1075,7 @@ impl Contract {
                             None => None
                         };
                         self.execute_update_profile_call(account_id, profile.json_metadata, image);
-                        CallResult::ProfileUpdated
+                        None
                     },
                 }
             },
