@@ -97,7 +97,8 @@ pub enum AccountLike {
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct AccountProfile {
     json_metadata: String,
-    image: LazyOption<Vec<u8>>
+    image: LazyOption<Vec<u8>>,
+    current_image_len: u64
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
@@ -257,24 +258,30 @@ impl Contract {
     }
 
     pub fn add_message_to_post(&mut self, post_id: PostId, text: String) -> Promise {
+        log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_add_message_to_post_call(&post_id, &text);
         let fee = self.calc_add_message_to_post_fee(&account_id, &post_id, &text);
+        log!("add_message_to_post fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::AddMessageToPost { post_id, text })
     }
 
     pub fn add_message_to_message(&mut self, parent_msg_id: MessageID, text: String) -> Promise {
+        log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_add_message_to_message_call(&parent_msg_id, &text);
-        let fee = self.calc_add_message_to_message_fee(&account_id, &parent_msg_id, &text);
+        let fee = self.calc_add_message_to_message_fee(&account_id, &text);
+        log!("add_message_to_message fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::AddMessageToMessage { parent_msg_id, text })
     }
 
     pub fn like_post(&mut self, post_id: PostId) -> Promise {
+        log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_like_post_call(&post_id);
         let fee = self.calc_like_post_fee(&account_id, &post_id) 
             + self.calc_account_stats_fee(&account_id, &post_id);
+        log!("like_post fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::LikePost { post_id })
     }
 
@@ -285,10 +292,12 @@ impl Contract {
     }
 
     pub fn like_message(&mut self, msg_id: MessageID) -> Promise {
+        log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_like_message_call(&msg_id);
         let fee = self.calc_like_message_fee(&account_id, &msg_id)
             + self.calc_account_stats_fee(&account_id, &msg_id.post_id);
+        log!("like_message fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::LikeMessage { msg_id })
     }
 
@@ -299,17 +308,21 @@ impl Contract {
     }
 
     pub fn add_friend(&mut self, friend_id: AccountId) -> Promise {
+        log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_add_friend_call(&friend_id);
         let fee = self.calc_add_friend_fee(&account_id, &friend_id);
+        log!("add_friend fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::AddFriend { friend_id })
     }
 
     pub fn update_profile(&mut self, profile: AccountProfileData) -> Promise {
+        log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_update_profile_call(&profile);
         // TODO: Return tokens for unused storage
         let fee = self.calc_update_profile_fee(&account_id, &profile);
+        log!("update_profile fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::UpdateProfile { profile })
     }
 
@@ -606,13 +619,24 @@ impl Contract {
     // Calculate call fee
 
     fn calc_add_message_to_post_fee(&mut self, account_id: &AccountId, post_id: &PostId, text: &String) -> u128 {
+        let is_first = !self.posts_messages.contains_key(post_id);
         let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
-        let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
-        let text_extra_bytes = u64::try_from(text.len() - MIN_POST_MESSAGE_LEN).unwrap();
-        let collection_bytes = match self.posts_messages.contains_key(post_id) {
-            false => self.storage_usage_settings.messages_collection_size,
-            true => 0u64
+        let post_id_extra_bytes = if is_first { 
+            u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap()
+        } else {
+            0u64
         };
+        let text_extra_bytes = u64::try_from(text.len() - MIN_POST_MESSAGE_LEN).unwrap();
+        let collection_bytes = if is_first {
+            self.storage_usage_settings.messages_collection_size
+        } else {
+            0u64
+        };
+
+        log!("account_extra_bytes bytes {}", account_extra_bytes);
+        log!("post_id_extra_bytes bytes {}", post_id_extra_bytes);
+        log!("text_extra_bytes bytes {}", text_extra_bytes);
+        log!("collection_bytes bytes {}", collection_bytes);
 
         let storage_size = self.storage_usage_settings.min_message_size 
             + account_extra_bytes 
@@ -620,55 +644,85 @@ impl Contract {
             + text_extra_bytes 
             + collection_bytes;
 
+        log!("add_message_to_post bytes {}", storage_size);
+
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
     }
 
-    fn calc_add_message_to_message_fee(&mut self, account_id: &AccountId, msg_id: &MessageID, text: &String) -> u128 {
+    fn calc_add_message_to_message_fee(&mut self, account_id: &AccountId, text: &String) -> u128 {
         let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
-        let post_id_extra_bytes = u64::try_from(msg_id.post_id.len() - MIN_POST_ID_LEN).unwrap();
         let text_extra_bytes = u64::try_from(text.len() - MIN_POST_MESSAGE_LEN).unwrap();
         let msg_idx_bytes = 8u64;
         
+        log!("account_extra_bytes bytes {}", account_extra_bytes);
+        log!("text_extra_bytes bytes {}", text_extra_bytes);
+        log!("msg_idx_bytes bytes {}", msg_idx_bytes);
+
         let storage_size = self.storage_usage_settings.min_message_size 
             + account_extra_bytes 
-            + post_id_extra_bytes
             + text_extra_bytes 
             + msg_idx_bytes;
+
+        log!("add_message_to_message bytes {}", storage_size);
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
     }
 
     fn calc_like_post_fee(&mut self, account_id: &AccountId, post_id: &PostId) -> u128 {
+        let is_first = !self.posts_likes.contains_key(post_id);
         let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
-        let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
-        let collection_bytes = match self.posts_likes.contains_key(post_id) {
-            false => self.storage_usage_settings.post_likes_collection_size,
-            true => 0u64
+        let post_id_extra_bytes = if is_first {
+            u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap() 
+        } else {
+            0u64
         };
+        let collection_bytes = if is_first {
+            self.storage_usage_settings.post_likes_collection_size
+        } else {
+            0u64
+        };
+
+        log!("account_extra_bytes bytes {}", account_extra_bytes);
+        log!("post_id_extra_bytes bytes {}", post_id_extra_bytes);
+        log!("collection_bytes bytes {}", collection_bytes);
         
         let storage_size = self.storage_usage_settings.min_post_like_size 
             + account_extra_bytes 
             + post_id_extra_bytes
             + collection_bytes;
 
+        log!("like_post bytes {}", storage_size);
+
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
     }
 
     fn calc_like_message_fee(&mut self, account_id: &AccountId, msg_id: &MessageID) -> u128 {
+        let is_first = !self.posts_messages_likes.contains_key(&msg_id.clone().into());
         let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
-        let post_id_extra_bytes = u64::try_from(msg_id.post_id.len() - MIN_POST_ID_LEN).unwrap();
-        let collection_bytes = match self.posts_messages_likes.contains_key(&msg_id.clone().into()) {
-            false => self.storage_usage_settings.message_likes_collection_size,
-            true => 0u64
+        let post_id_extra_bytes = if is_first { 
+            u64::try_from(msg_id.post_id.len() - MIN_POST_ID_LEN).unwrap() 
+        } else {
+            0u64
         };
+        let collection_bytes = if is_first {
+            self.storage_usage_settings.message_likes_collection_size
+        } else {
+            0u64
+        };
+
+        log!("account_extra_bytes bytes {}", account_extra_bytes);
+        log!("post_id_extra_bytes bytes {}", post_id_extra_bytes);
+        log!("collection_bytes bytes {}", collection_bytes);
         
         let storage_size = self.storage_usage_settings.min_message_like_size 
             + account_extra_bytes 
             + post_id_extra_bytes
             + collection_bytes;
+
+        log!("like_message bytes {}", storage_size);
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
@@ -679,49 +733,94 @@ impl Contract {
             return 0
         }
 
-        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
-        let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
-        let collection_bytes = match self.accounts_stats.contains_key(&account_id) {
-            false => self.storage_usage_settings.account_stat_likes_collection_size,
-            true => 0u64
+        let is_first = !self.accounts_stats.contains_key(&account_id);
+        let account_extra_bytes = if is_first { 
+            u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap() 
+        }  else {
+            0u64
         };
+        let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
+        let collection_bytes = if is_first {
+            self.storage_usage_settings.account_stat_likes_collection_size 
+        } else {
+            0u64
+        };
+
+        log!("account_extra_bytes bytes {}", account_extra_bytes);
+        log!("post_id_extra_bytes bytes {}", post_id_extra_bytes);
+        log!("collection_bytes bytes {}", collection_bytes);
 
         let storage_size = self.storage_usage_settings.min_account_stat_like_size 
             + account_extra_bytes 
             + post_id_extra_bytes
             + collection_bytes;
 
+        log!("account_stats bytes {}", storage_size);
+
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
     }
 
     fn calc_add_friend_fee(&mut self, account_id: &AccountId, friend_id: &AccountId) -> u128 {
-        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
-        let friend_id_extra_bytes = u64::try_from(friend_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
-        let collection_bytes = match self.accounts_friends.contains_key(&account_id) {
-            false => self.storage_usage_settings.account_friends_collection_size,
-            true => 0u64
+        let is_first = !self.accounts_friends.contains_key(&account_id);
+        let account_extra_bytes = if is_first { 
+            u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap() 
+        } else {
+            0u64
         };
+        let friend_id_extra_bytes = u64::try_from(friend_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let collection_bytes = if is_first {
+            self.storage_usage_settings.account_friends_collection_size
+        } else {
+            0u64
+        };
+
+        log!("account_extra_bytes bytes {}", account_extra_bytes);
+        log!("friend_id_extra_bytes bytes {}", friend_id_extra_bytes);
+        log!("collection_bytes bytes {}", collection_bytes);
 
         let storage_size = self.storage_usage_settings.min_account_friend_size 
             + account_extra_bytes 
             + friend_id_extra_bytes
             + collection_bytes;
 
+        log!("add_friend bytes {}", storage_size);
+
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
     }
 
     fn calc_update_profile_fee(&mut self, account_id: &AccountId, profile: &AccountProfileData) -> u128 {
-        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
-        let json_metadata_bytes = match &profile.json_metadata {
-            Some(metadata) => u64::try_from(metadata.len()).unwrap(),
+        let existing_profile = self.accounts_profiles.get(&account_id);
+        let account_extra_bytes = !if existing_profile.is_some() { 
+            u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap() 
+        } else {
+            0u64
+        };
+        let json_metadata_extra_bytes = match &profile.json_metadata {
+            Some(metadata) => {
+              if let Some(p) = &existing_profile {
+                  match u64::try_from(metadata.len()).unwrap().checked_sub(u64::try_from(p.json_metadata.len()).unwrap()) {
+                      Some(diff) => diff,
+                      None => 0u64
+                  }
+              } else {
+                  u64::try_from(metadata.len()).unwrap()
+              }
+            },
             None => 0u64
         };
-        let image_bytes = match &profile.image {
+        let image_extra_bytes = match &profile.image {
             Some(bytes) => {
                if let Some(v) = bytes.try_to_vec().ok() {
-                  u64::try_from(v.len()).unwrap()
+                  if let Some(p) = existing_profile {
+                      match u64::try_from(v.len()).unwrap().checked_sub(p.current_image_len) {
+                          Some(diff) => diff,
+                          None => 0u64
+                      }
+                  } else {
+                      u64::try_from(v.len()).unwrap()
+                  }
                } else {
                   0u64
                }
@@ -729,11 +828,17 @@ impl Contract {
             None => 0u64
         };
 
+        log!("account_extra_bytes bytes {}", account_extra_bytes);
+        log!("json_metadata_extra_bytes bytes {}", json_metadata_extra_bytes);
+        log!("image_extra_bytes bytes {}", image_extra_bytes);
+
         // TODO: Return tokens for unused storage
         let storage_size = self.storage_usage_settings.min_account_profile_size 
             + account_extra_bytes 
-            + json_metadata_bytes
-            + image_bytes;
+            + json_metadata_extra_bytes
+            + image_extra_bytes;
+
+        log!("update_profile bytes {}", storage_size);
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
@@ -834,6 +939,7 @@ impl Contract {
 
         if let Some(bytes) = image {
             account_profile.image.set(&bytes);
+            account_profile.current_image_len = u64::try_from(bytes.len()).unwrap();
         };
 
         self.accounts_profiles.insert(&account_id, &account_profile);
@@ -979,7 +1085,8 @@ impl Contract {
                     account_id: env::sha256(account_id.as_bytes()),
                 },
                 None
-            )
+            ),
+            current_image_len: 0
         };
         
         self.accounts_profiles.insert(account_id, &account_profile);
