@@ -280,6 +280,7 @@ impl Contract {
 
     pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
         self.assert_unlike_post_call(&post_id);
+        // TODO: Return tokens for unused storage
         self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikePost { post_id })
     }
 
@@ -293,6 +294,7 @@ impl Contract {
 
     pub fn unlike_message(&mut self, msg_id: MessageID) -> Promise {
         self.assert_unlike_message_call(&msg_id);
+        // TODO: Return tokens for unused storage
         self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikeMessage { msg_id })
     }
 
@@ -304,8 +306,11 @@ impl Contract {
     }
 
     pub fn update_profile(&mut self, profile: AccountProfileData) -> Promise {
+        let account_id = env::signer_account_id();
         self.assert_update_profile_call(&profile);
-        self.collect_fee_and_execute_call(FIXED_FEE, Call::UpdateProfile { profile })
+        // TODO: Return tokens for unused storage
+        let fee = self.calc_update_profile_fee(&account_id, &profile);
+        self.collect_fee_and_execute_call(fee, Call::UpdateProfile { profile })
     }
 
     pub fn update_settings(&mut self, settings: CustomSettingsData) {
@@ -708,6 +713,33 @@ impl Contract {
           + account_extra_bytes 
           + friend_id_extra_bytes
           + collection_bytes;
+
+        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
+        storage_fee.into()
+    }
+
+    fn calc_update_profile_fee(&mut self, account_id: &AccountId, profile: &AccountProfileData) -> u128 {
+        let account_extra_bytes = u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap();
+        let json_metadata_bytes = match &profile.json_metadata {
+            Some(metadata) => u64::try_from(metadata.len()).unwrap(),
+            None => 0u64
+        };
+        let image_bytes = match &profile.image {
+            Some(bytes) => {
+               if let Some(v) = bytes.try_to_vec().ok() {
+                  u64::try_from(v.len()).unwrap()
+               } else {
+                  0u64
+               }
+            },
+            None => 0u64
+        };
+
+        // TODO: Return tokens for unused storage
+        let storage_size = self.storage_usage_settings.min_account_profile_size 
+          + account_extra_bytes 
+          + json_metadata_bytes
+          + image_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
