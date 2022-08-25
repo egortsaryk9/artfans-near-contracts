@@ -478,12 +478,6 @@ impl Contract {
         self.storage_usage_settings.clone()
     }
 
-}
-
-// Private methods
-
-#[near_bindgen]
-impl Contract {
 
     // Assert incoming call
 
@@ -1251,6 +1245,7 @@ impl Contract {
             _ => env::panic_str("Fee was not charged"),
         }
     }
+
 }
 
 pub trait Ownable {
