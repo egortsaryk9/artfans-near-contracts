@@ -615,10 +615,10 @@ impl Contract {
         };
 
         let storage_size = self.storage_usage_settings.min_message_size 
-          + account_extra_bytes 
-          + text_extra_bytes 
-          + post_id_extra_bytes
-          + collection_bytes;
+            + account_extra_bytes 
+            + post_id_extra_bytes
+            + text_extra_bytes 
+            + collection_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
@@ -631,10 +631,10 @@ impl Contract {
         let msg_idx_bytes = 8u64;
         
         let storage_size = self.storage_usage_settings.min_message_size 
-          + account_extra_bytes 
-          + text_extra_bytes 
-          + post_id_extra_bytes
-          + msg_idx_bytes;
+            + account_extra_bytes 
+            + post_id_extra_bytes
+            + text_extra_bytes 
+            + msg_idx_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
@@ -649,9 +649,9 @@ impl Contract {
         };
         
         let storage_size = self.storage_usage_settings.min_post_like_size 
-          + account_extra_bytes 
-          + post_id_extra_bytes
-          + collection_bytes;
+            + account_extra_bytes 
+            + post_id_extra_bytes
+            + collection_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
@@ -666,9 +666,9 @@ impl Contract {
         };
         
         let storage_size = self.storage_usage_settings.min_message_like_size 
-          + account_extra_bytes 
-          + post_id_extra_bytes
-          + collection_bytes;
+            + account_extra_bytes 
+            + post_id_extra_bytes
+            + collection_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
@@ -687,9 +687,9 @@ impl Contract {
         };
 
         let storage_size = self.storage_usage_settings.min_account_stat_like_size 
-          + account_extra_bytes 
-          + post_id_extra_bytes
-          + collection_bytes;
+            + account_extra_bytes 
+            + post_id_extra_bytes
+            + collection_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
@@ -704,9 +704,9 @@ impl Contract {
         };
 
         let storage_size = self.storage_usage_settings.min_account_friend_size 
-          + account_extra_bytes 
-          + friend_id_extra_bytes
-          + collection_bytes;
+            + account_extra_bytes 
+            + friend_id_extra_bytes
+            + collection_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
@@ -731,9 +731,9 @@ impl Contract {
 
         // TODO: Return tokens for unused storage
         let storage_size = self.storage_usage_settings.min_account_profile_size 
-          + account_extra_bytes 
-          + json_metadata_bytes
-          + image_bytes;
+            + account_extra_bytes 
+            + json_metadata_bytes
+            + image_bytes;
 
         let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
         storage_fee.into()
