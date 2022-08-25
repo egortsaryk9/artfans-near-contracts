@@ -11,7 +11,7 @@ pub mod external;
 pub use crate::external::*;
 
 const MIN_ACCOUNT_ID_LEN : usize = 2;
-const MIN_POST_ID_LEN : usize = 24;
+const MIN_POST_ID_LEN : usize = 1;
 const MIN_POST_MESSAGE_LEN : usize = 1;
 
 #[near_bindgen]
