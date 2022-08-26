@@ -689,7 +689,7 @@ impl Contract {
         log!("collection_bytes bytes {}", collection_bytes);
         
         let storage_size = self.storage_usage_settings.min_post_like_size 
-            + account_extra_bytes 
+            + (account_extra_bytes * 2) // UnorderedSet stores additional key in its 'elements: Vector<T>'
             + post_id_extra_bytes
             + collection_bytes;
 
@@ -718,7 +718,7 @@ impl Contract {
         log!("collection_bytes bytes {}", collection_bytes);
         
         let storage_size = self.storage_usage_settings.min_message_like_size 
-            + account_extra_bytes 
+            + (account_extra_bytes * 2) // UnorderedSet stores additional key in its 'elements: Vector<T>'
             + post_id_extra_bytes
             + collection_bytes;
 
@@ -781,7 +781,7 @@ impl Contract {
 
         let storage_size = self.storage_usage_settings.min_account_friend_size 
             + account_extra_bytes 
-            + friend_id_extra_bytes
+            + (friend_id_extra_bytes * 2) // UnorderedSet stores additional key in its 'elements: Vector<T>'
             + collection_bytes;
 
         log!("add_friend bytes {}", storage_size);
