@@ -792,8 +792,8 @@ impl Contract {
 
     fn calc_update_profile_fee(&mut self, account_id: &AccountId, profile: &AccountProfileData) -> u128 {
         let existing_profile = self.accounts_profiles.get(&account_id);
-        let account_extra_bytes = !if existing_profile.is_some() { 
-            u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap() 
+        let account_extra_bytes = if !existing_profile.is_some() {
+            u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap()
         } else {
             0u64
         };
