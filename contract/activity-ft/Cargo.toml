@@ -1,5 +1,5 @@
 [package]
-name = "artfans-ft"
+name = "artfans-activity-ft"
 version = "1.0.0"
 authors = ["Artfans"]
 edition = "2018"
