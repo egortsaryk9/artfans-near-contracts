@@ -92,21 +92,31 @@ impl Contract {
     }
 
     #[payable]
-    pub fn mint(&mut self, account_id: AccountId, amount: U128) -> bool {
+    pub fn mint(&mut self, account_id: AccountId, amount: U128, registration_fee: Option<U128>) -> U128 {
         self.assert_minter();
-        if !self.token.accounts.contains_key(&account_id) {
-            self.storage_deposit(Some(account_id.clone()), None);
-            self.token.internal_deposit(&account_id, amount.into());
-            true
+        let amount_to_mint: u128 = if self.token.accounts.contains_key(&account_id) {
+            amount.into()
         } else {
-            self.token.internal_deposit(&account_id, amount.into());
-            false
-        }
+            match registration_fee {
+                Some(fee) => {
+                    let total: u128 = amount.into();
+                    let correction: u128 = fee.into();
+                    if total < correction {
+                        env::panic_str("Amount is not enough to cover the storage deposit fee");
+                    };
+                    total - correction
+                },
+                None => amount.into()
+            }
+        };
+        self.storage_deposit(Some(account_id.clone()), None);
+        self.token.internal_deposit(&account_id, amount_to_mint);
+        U128(amount_to_mint)
     }
 
     #[payable]
     pub fn burn(&mut self, account_id: AccountId, amount: U128) {
-        self.assert_minter();
+        self.assert_owner();
         assert_one_yocto();
         self.token.internal_withdraw(&account_id, amount.into());
     }

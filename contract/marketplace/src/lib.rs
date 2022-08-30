@@ -7,7 +7,7 @@ pub mod external;
 pub use crate::external::*;
 
 pub const ACTIVITY_FT_EXCHANGE_RATE: u128 = 100;
-pub const ACTIVITY_FT_STORAGE_DEPOSIT_YOCTO: u128 = 1_250_000_000_000_000_000_000;
+pub const ACTIVITY_FT_REGISTRATION_FEE: u128 = 1_250_000_000_000_000_000_000;
 
 
 #[near_bindgen]
@@ -48,52 +48,49 @@ impl Contract {
     #[payable]
     pub fn buy_activity_ft(&mut self) -> Promise {
         let near_amount = env::attached_deposit();
-        if near_amount < ACTIVITY_FT_STORAGE_DEPOSIT_YOCTO {
+        if near_amount < ACTIVITY_FT_REGISTRATION_FEE {
             env::panic_str("Attached deposit must be greater than 0.00125 NEAR");
         };
 
         let buyer_id = env::predecessor_account_id();
         let ft_amount = near_amount.saturating_mul(ACTIVITY_FT_EXCHANGE_RATE);
-        self.purchase_activity_ft(buyer_id, near_amount, ft_amount)
+        let ft_registration_fee = ACTIVITY_FT_REGISTRATION_FEE.saturating_mul(ACTIVITY_FT_EXCHANGE_RATE);
+        self.purchase_activity_ft(buyer_id, ft_amount, ft_registration_fee)
     }
 
-    fn purchase_activity_ft(&mut self, buyer_id: AccountId, near_amount: u128, ft_amount: u128) -> Promise {
+    fn purchase_activity_ft(&mut self, buyer_id: AccountId, ft_amount: u128, ft_registration_fee: u128) -> Promise {
         ext_ft::ext(self.activity_ft.clone())
             .with_static_gas(Gas(5*TGAS))
-            .with_attached_deposit(ACTIVITY_FT_STORAGE_DEPOSIT_YOCTO)
-            .mint(buyer_id.clone(), U128::from(ft_amount))
+            .with_attached_deposit(ACTIVITY_FT_REGISTRATION_FEE)
+            .mint(buyer_id.clone(), U128::from(ft_amount), Some(U128::from(ft_registration_fee)))
                 .then(
                     ext_self::ext(env::current_account_id())
                     .with_static_gas(Gas(5*TGAS))
-                    .on_activity_ft_purchased(buyer_id, near_amount, ft_amount)
+                    .on_activity_ft_purchased(buyer_id, ft_amount)
                 )
     }
 
     #[private]
-    pub fn on_activity_ft_purchased(&mut self, buyer_id: AccountId, near_amount: u128, ft_amount: u128) -> u128 {
+    pub fn on_activity_ft_purchased(&mut self, buyer_id: AccountId, ft_amount: u128) -> U128 {
+        let near_amount = ft_amount.saturating_div(ACTIVITY_FT_EXCHANGE_RATE);
+
         if is_promise_success() {
             let result = promise_result_as_success().expect("Unexpected promise result");
-            let charge_storage_fee : bool = near_sdk::serde_json::from_slice::<bool>(&result).ok().expect("Unexpected value result from promise");
+            let minted_ft_amount = u128::from(near_sdk::serde_json::from_slice::<U128>(&result).ok().expect("Unexpected value result from promise"));
 
-            if charge_storage_fee {
-                let decreased_near_amount = near_amount.saturating_sub(ACTIVITY_FT_STORAGE_DEPOSIT_YOCTO);
-                Promise::new(self.activity_ft_beneficiary.clone()).transfer(u128::from(decreased_near_amount));
-
-                let ft_amount_to_burn = ACTIVITY_FT_STORAGE_DEPOSIT_YOCTO.saturating_mul(ACTIVITY_FT_EXCHANGE_RATE);
-                ext_ft::ext(self.activity_ft.clone())
-                    .with_static_gas(Gas(5*TGAS))
-                    .with_attached_deposit(1)
-                    .burn(buyer_id, U128(ft_amount_to_burn));
-
-                ft_amount - ft_amount_to_burn
-
+            if minted_ft_amount == ft_amount {
+                Promise::new(self.activity_ft_beneficiary.clone()).transfer(near_amount);
             } else {
-                Promise::new(self.activity_ft_beneficiary.clone()).transfer(u128::from(near_amount));
-                ft_amount
-            }
+                let ft_registration_fee = ACTIVITY_FT_REGISTRATION_FEE.saturating_mul(ACTIVITY_FT_EXCHANGE_RATE);
+                assert_eq!(ft_amount.saturating_sub(minted_ft_amount), ft_registration_fee, "Unexpected amount of minted tokens");
+                let near_registration_fee = ft_registration_fee.saturating_div(ACTIVITY_FT_EXCHANGE_RATE);
+                let amount = near_amount - near_registration_fee;
+                Promise::new(self.activity_ft_beneficiary.clone()).transfer(amount);
+            };
+            U128(minted_ft_amount)
         } else {
-            Promise::new(buyer_id.clone()).transfer(u128::from(near_amount));
-            0
+            Promise::new(buyer_id.clone()).transfer(near_amount);
+            U128(0)
         }
     }
 }
