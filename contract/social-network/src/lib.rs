@@ -287,7 +287,6 @@ impl Contract {
 
     pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
         self.assert_unlike_post_call(&post_id);
-        // TODO: Return tokens for unused storage
         self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikePost { post_id })
     }
 
@@ -303,7 +302,6 @@ impl Contract {
 
     pub fn unlike_message(&mut self, msg_id: MessageID) -> Promise {
         self.assert_unlike_message_call(&msg_id);
-        // TODO: Return tokens for unused storage
         self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikeMessage { msg_id })
     }
 
@@ -320,7 +318,6 @@ impl Contract {
         log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_update_profile_call(&profile);
-        // TODO: Return tokens for unused storage
         let fee = self.calc_update_profile_fee(&account_id, &profile);
         log!("update_profile fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::UpdateProfile { profile })
@@ -880,7 +877,7 @@ impl Contract {
         let image_extra_bytes = match &profile.image {
             Some(bytes) => {
                if let Some(v) = bytes.try_to_vec().ok() {
-                  if let Some(p) = existing_profile {
+                  if let Some(p) = &existing_profile {
                       match u64::try_from(v.len()).unwrap().checked_sub(p.current_image_len) {
                           Some(diff) => diff,
                           None => 0u64
@@ -895,12 +892,18 @@ impl Contract {
             None => 0u64
         };
 
+        let min_account_profile_size = if existing_profile.is_none() {
+            self.storage_usage_settings.min_account_profile_size 
+        } else {
+            0u64
+        };
+
         log!("account_extra_bytes bytes {}", account_extra_bytes);
         log!("json_metadata_extra_bytes bytes {}", json_metadata_extra_bytes);
         log!("image_extra_bytes bytes {}", image_extra_bytes);
+        log!("min_account_profile_size bytes {}", min_account_profile_size);
 
-        // TODO: Return tokens for unused storage
-        let storage_size = self.storage_usage_settings.min_account_profile_size 
+        let storage_size = min_account_profile_size
             + account_extra_bytes 
             + json_metadata_extra_bytes
             + image_extra_bytes;
