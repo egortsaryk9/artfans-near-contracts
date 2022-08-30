@@ -9,6 +9,10 @@ use near_sdk::{
     env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue,
 };
 
+
+const MAX_SUPPLY : u128 = 26_000;
+
+
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Contract {
@@ -59,6 +63,7 @@ impl Contract {
         this
     }
 
+
     #[payable]
     pub fn nft_mint(
         &mut self,
@@ -66,10 +71,15 @@ impl Contract {
         receiver_id: AccountId
     ) -> Token {
         self.assert_minter();
-        if let Some(token_metadata) = self.default_token_metadata.get() {
-            self.tokens.internal_mint(token_id, receiver_id, Some(token_metadata))
-        } else {          
-            env::panic_str("Default token metadata is missed");
+        let total_supply = u128::from(self.tokens.nft_total_supply());
+        if total_supply < MAX_SUPPLY {
+            if let Some(token_metadata) = self.default_token_metadata.get() {
+                self.tokens.internal_mint(token_id, receiver_id, Some(token_metadata))
+            } else {          
+                env::panic_str("Default token metadata is not defined");
+            }
+        } else {
+            env::panic_str("Max tokens supply is reached");
         }
     }
 
