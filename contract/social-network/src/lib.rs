@@ -18,7 +18,7 @@ const MIN_POST_MESSAGE_LEN : usize = 1;
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Contract {
     owner: AccountId,
-    fee_ft: AccountId,
+    // fee_ft: AccountId,
     custom_settings: CustomSettings,
     storage_usage_settings: StorageUsageSettings,
     posts_messages: LookupMap<PostId, Vector<Message>>,
@@ -218,13 +218,13 @@ pub struct MessageDTO {
 impl Contract {
 
     #[init]
-    pub fn new(owner: AccountId, fee_ft: AccountId, settings: CustomSettingsData) -> Self {
+    pub fn new(owner: AccountId, /* fee_ft: AccountId, */ settings: CustomSettingsData) -> Self {
         if env::state_exists() == true {
             env::panic_str("Already initialized");
         }
         let mut this = Self {
             owner,
-            fee_ft,
+            // fee_ft,
             custom_settings: CustomSettings {
               account_recent_likes_limit: match settings.account_recent_likes_limit {
                 Some(account_recent_likes_limit) => account_recent_likes_limit,
@@ -257,7 +257,7 @@ impl Contract {
         this
     }
 
-    pub fn add_message_to_post(&mut self, post_id: PostId, text: String) -> Promise {
+    pub fn add_message_to_post(&mut self, post_id: PostId, text: String) -> Option<String> {
         // log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_add_message_to_post_call(&post_id, &text);
@@ -266,7 +266,7 @@ impl Contract {
         self.collect_fee_and_execute_call(fee, Call::AddMessageToPost { post_id, text })
     }
 
-    pub fn add_message_to_message(&mut self, parent_msg_id: MessageID, text: String) -> Promise {
+    pub fn add_message_to_message(&mut self, parent_msg_id: MessageID, text: String) -> Option<String> {
         // log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_add_message_to_message_call(&parent_msg_id, &text);
@@ -275,7 +275,7 @@ impl Contract {
         self.collect_fee_and_execute_call(fee, Call::AddMessageToMessage { parent_msg_id, text })
     }
 
-    pub fn like_post(&mut self, post_id: PostId) -> Promise {
+    pub fn like_post(&mut self, post_id: PostId) -> Option<String> {
         // log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_like_post_call(&post_id);
@@ -285,12 +285,12 @@ impl Contract {
         self.collect_fee_and_execute_call(fee, Call::LikePost { post_id })
     }
 
-    pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
+    pub fn unlike_post(&mut self, post_id: PostId) -> Option<String> {
         self.assert_unlike_post_call(&post_id);
         self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikePost { post_id })
     }
 
-    pub fn like_message(&mut self, msg_id: MessageID) -> Promise {
+    pub fn like_message(&mut self, msg_id: MessageID) -> Option<String> {
         // log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_like_message_call(&msg_id);
@@ -300,12 +300,12 @@ impl Contract {
         self.collect_fee_and_execute_call(fee, Call::LikeMessage { msg_id })
     }
 
-    pub fn unlike_message(&mut self, msg_id: MessageID) -> Promise {
+    pub fn unlike_message(&mut self, msg_id: MessageID) -> Option<String> {
         self.assert_unlike_message_call(&msg_id);
         self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikeMessage { msg_id })
     }
 
-    pub fn add_friend(&mut self, friend_id: AccountId) -> Promise {
+    pub fn add_friend(&mut self, friend_id: AccountId) -> Option<String> {
         // log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_add_friend_call(&friend_id);
@@ -314,7 +314,7 @@ impl Contract {
         self.collect_fee_and_execute_call(fee, Call::AddFriend { friend_id })
     }
 
-    pub fn update_profile(&mut self, profile: AccountProfileData) -> Promise {
+    pub fn update_profile(&mut self, profile: AccountProfileData) -> Option<String> {
         // log!("storage_byte_cost {}", env::storage_byte_cost());
         let account_id = env::signer_account_id();
         self.assert_update_profile_call(&profile);
@@ -1349,76 +1349,71 @@ impl Contract {
     }
 
 
-    fn collect_fee_and_execute_call(&mut self, fee: u128, call: Call) -> Promise {
-        ext_ft::ext(self.fee_ft.clone())
-            .with_static_gas(Gas(5*TGAS))
-            .ft_collect_fee(U128::from(fee))
-                .then(
-                    ext_self::ext(env::current_account_id())
-                    .with_static_gas(Gas(5*TGAS))
-                    .on_fee_collected(call)
-                )
+    fn collect_fee_and_execute_call(&mut self, fee: u128, call: Call) -> Option<String>  {
+        // ext_ft::ext(self.fee_ft.clone())
+        //     .with_static_gas(Gas(5*TGAS))
+        //     .ft_collect_fee(U128::from(fee))
+        //         .then(
+        //             ext_self::ext(env::current_account_id())
+        //             .with_static_gas(Gas(5*TGAS))
+        //             .on_fee_collected(call)
+        //         )
+
+        self.on_fee_collected(call)
     }
 
 
     #[private]
     pub fn on_fee_collected(&mut self, call: Call) -> Option<String> {
 
-        if env::promise_results_count() != 1 {
-            env::panic_str("Unexpected promise results count");
-        }
+        // if env::promise_results_count() != 1 {
+        //     env::panic_str("Unexpected promise results count");
+        // }
 
         let account_id = env::signer_account_id();
-
-        match env::promise_result(0) {
-            PromiseResult::Successful(_) => {
-                match call {
-                    Call::AddMessageToPost { post_id, text } => {
-                        let msg_id = self.execute_add_message_to_post_call(account_id, post_id, text);
-                        serde_json::to_string(&msg_id).ok()
-                    },
-                    Call::AddMessageToMessage { parent_msg_id, text } => {
-                        let msg_id = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
-                        serde_json::to_string(&msg_id).ok()
-                    },
-                    Call::LikePost { post_id } => {
-                        let like = self.execute_like_post_call(account_id.clone(), post_id);
-                        self.add_like_to_account_likes_stat(account_id, like);
-                        None
-                    },
-                    Call::UnlikePost { post_id } => {
-                        let like = self.execute_unlike_post_call(account_id.clone(), post_id);
-                        self.remove_like_from_account_likes_stat(account_id, like);
-                        None
-                    },
-                    Call::LikeMessage { msg_id } => {
-                        let like = self.execute_like_message_call(account_id.clone(), msg_id.into());
-                        self.add_like_to_account_likes_stat(account_id, like);
-                        None
-                    },
-                    Call::UnlikeMessage { msg_id } => {
-                        let like = self.execute_unlike_message_call(account_id.clone(), msg_id.into());
-                        self.remove_like_from_account_likes_stat(account_id, like);
-                        None
-                    },
-                    Call::AddFriend { friend_id } => {
-                        self.execute_add_friend_call(account_id, friend_id);
-                        None
-                    },
-                    Call::UpdateProfile { profile } => {
-                        let image: Option<Vec<u8>> = match profile.image {
-                            Some(vec) => Some(vec.into()),
-                            None => None
-                        };
-                        self.execute_update_profile_call(account_id, profile.json_metadata, image);
-                        None
-                    },
-                }
+        match call {
+            Call::AddMessageToPost { post_id, text } => {
+                let msg_id = self.execute_add_message_to_post_call(account_id, post_id, text);
+                serde_json::to_string(&msg_id).ok()
             },
-            _ => env::panic_str("Fee was not charged"),
+            Call::AddMessageToMessage { parent_msg_id, text } => {
+                let msg_id = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
+                serde_json::to_string(&msg_id).ok()
+            },
+            Call::LikePost { post_id } => {
+                let like = self.execute_like_post_call(account_id.clone(), post_id);
+                self.add_like_to_account_likes_stat(account_id, like);
+                None
+            },
+            Call::UnlikePost { post_id } => {
+                let like = self.execute_unlike_post_call(account_id.clone(), post_id);
+                self.remove_like_from_account_likes_stat(account_id, like);
+                None
+            },
+            Call::LikeMessage { msg_id } => {
+                let like = self.execute_like_message_call(account_id.clone(), msg_id.into());
+                self.add_like_to_account_likes_stat(account_id, like);
+                None
+            },
+            Call::UnlikeMessage { msg_id } => {
+                let like = self.execute_unlike_message_call(account_id.clone(), msg_id.into());
+                self.remove_like_from_account_likes_stat(account_id, like);
+                None
+            },
+            Call::AddFriend { friend_id } => {
+                self.execute_add_friend_call(account_id, friend_id);
+                None
+            },
+            Call::UpdateProfile { profile } => {
+                let image: Option<Vec<u8>> = match profile.image {
+                    Some(vec) => Some(vec.into()),
+                    None => None
+                };
+                self.execute_update_profile_call(account_id, profile.json_metadata, image);
+                None
+            }
         }
     }
-
 }
 
 pub trait Ownable {
