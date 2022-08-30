@@ -58,8 +58,8 @@ pub struct StorageUsageSettings {
     min_account_friend_size: StorageUsage,
     account_friends_collection_size: StorageUsage,
     min_account_profile_size: StorageUsage,
-    min_account_stat_like_size: StorageUsage,
-    account_stat_likes_collection_size: StorageUsage
+    min_account_recent_like_size: StorageUsage,
+    account_recent_likes_collection_size: StorageUsage
 }
 
 type PostId = String;
@@ -230,7 +230,7 @@ impl Contract {
                 Some(account_recent_likes_limit) => account_recent_likes_limit,
                 None => 0
               },
-            }, 
+            },
             storage_usage_settings: StorageUsageSettings {
                 min_message_size: 0,
                 messages_collection_size: 0,
@@ -241,8 +241,8 @@ impl Contract {
                 min_account_friend_size: 0,
                 account_friends_collection_size: 0,
                 min_account_profile_size: 0,
-                min_account_stat_like_size: 0,
-                account_stat_likes_collection_size: 0
+                min_account_recent_like_size: 0,
+                account_recent_likes_collection_size: 0
             },
             posts_messages: LookupMap::new(StorageKeys::PostsMessages),
             posts_likes: LookupMap::new(StorageKeys::PostsLikes),
@@ -280,7 +280,7 @@ impl Contract {
         let account_id = env::signer_account_id();
         self.assert_like_post_call(&post_id);
         let fee = self.calc_like_post_fee(&account_id, &post_id) 
-            + self.calc_account_stats_fee(&account_id, &post_id);
+            + self.calc_account_recent_likes_fee(&account_id, &post_id, false);
         log!("like_post fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::LikePost { post_id })
     }
@@ -296,7 +296,7 @@ impl Contract {
         let account_id = env::signer_account_id();
         self.assert_like_message_call(&msg_id);
         let fee = self.calc_like_message_fee(&account_id, &msg_id)
-            + self.calc_account_stats_fee(&account_id, &msg_id.post_id);
+            + self.calc_account_recent_likes_fee(&account_id, &msg_id.post_id, true);
         log!("like_message fee {}", fee);
         self.collect_fee_and_execute_call(fee, Call::LikeMessage { msg_id })
     }
@@ -499,6 +499,7 @@ impl Contract {
             env::panic_str("'text' is empty or whitespace");
         };
         
+        // TODO: Add validation for text limit length
         if text.len() < MIN_POST_MESSAGE_LEN {
             env::panic_str("'text' length is too small");
         };
@@ -511,6 +512,7 @@ impl Contract {
             env::panic_str("'text' is empty or whitespace");
         };
 
+        // TODO: Add validation for text limit length
         if text.len() < MIN_POST_MESSAGE_LEN {
             env::panic_str("'text' length is too small");
         };
@@ -559,7 +561,7 @@ impl Contract {
         let account_id = env::signer_account_id();
         
         self.assert_message_id(msg_id);
-
+        // TODO: Add validation for message existence
         if let Some(post_message_likes) = self.posts_messages_likes.get(&msg_id.into()) {
             if post_message_likes.contains(&account_id) {
                 env::panic_str("Message is liked already");
@@ -571,7 +573,7 @@ impl Contract {
         let account_id = env::signer_account_id();
         
         self.assert_message_id(msg_id);
-
+        // TODO: Add validation for message existence
         if let Some(post_message_likes) = self.posts_messages_likes.get(&msg_id.into()) {
             if !post_message_likes.contains(&account_id) {
                 env::panic_str("Message is not liked");
@@ -601,6 +603,7 @@ impl Contract {
     }
     
     fn assert_post_id(&self, post_id: &PostId) {
+        // TODO: Add validation for post_id limit length
         if post_id.trim().is_empty() {
             env::panic_str("'post_id' is empty or whitespace");
         };
@@ -728,31 +731,72 @@ impl Contract {
         storage_fee.into()
     }
 
-    fn calc_account_stats_fee(&mut self, account_id: &AccountId, post_id: &PostId) -> u128 {
+
+    fn calc_account_recent_likes_fee(&mut self, account_id: &AccountId, post_id: &PostId, is_msg: bool) -> u128 {
         if self.custom_settings.account_recent_likes_limit == 0 {
             return 0
         }
-
-        let is_first = !self.accounts_stats.contains_key(&account_id);
-        let account_extra_bytes = if is_first { 
+        
+        let existing_account_stats = self.accounts_stats.get(&account_id);
+        let account_extra_bytes = if existing_account_stats.is_none() {
             u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap() 
-        }  else {
+        } else {
             0u64
         };
-        let post_id_extra_bytes = u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap();
-        let collection_bytes = if is_first {
-            self.storage_usage_settings.account_stat_likes_collection_size 
+
+        let msg_idx_bytes = if is_msg {
+            8u64
+        } else {
+            0u64
+        };
+
+        let like_extra_bytes = if existing_account_stats.is_some() {
+            let account_stats = existing_account_stats.as_ref().unwrap();
+            let recent_likes_len = u64::try_from(account_stats.recent_likes.len()).unwrap();
+            let recent_likes_limit = u64::try_from(self.custom_settings.account_recent_likes_limit).unwrap();
+            
+            if recent_likes_len == recent_likes_limit {
+                let like_to_delete = account_stats.recent_likes.get(0).expect("Old like is not found");
+                match like_to_delete {
+                    AccountLike::PostLike { post_id: post_id_to_delete } => {
+                        if post_id_to_delete.len() > post_id.len() {
+                            u64::try_from(post_id_to_delete.len() - post_id.len()).unwrap() + msg_idx_bytes
+                        } else {
+                            u64::try_from(post_id.len() - post_id_to_delete.len()).unwrap() + msg_idx_bytes
+                        }
+                    },
+                    AccountLike::MessageLike { msg_id: msg_id_to_delete } => {
+                        if msg_id_to_delete.post_id.len() > post_id.len() {
+                            u64::try_from(msg_id_to_delete.post_id.len() - post_id.len()).unwrap()
+                        } else {
+                            u64::try_from(post_id.len() - msg_id_to_delete
+                            .post_id.len()).unwrap()
+                        }
+                    }
+                }
+
+            } else if recent_likes_len < recent_likes_limit {
+                u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap() + msg_idx_bytes
+            } else {
+                0u64
+            }
+        } else  {
+            u64::try_from(post_id.len() - MIN_POST_ID_LEN).unwrap() + msg_idx_bytes
+        };
+
+        let collection_bytes = if existing_account_stats.is_none() {
+            self.storage_usage_settings.account_recent_likes_collection_size 
         } else {
             0u64
         };
 
         log!("account_extra_bytes bytes {}", account_extra_bytes);
-        log!("post_id_extra_bytes bytes {}", post_id_extra_bytes);
+        log!("like_extra_bytes bytes {}", like_extra_bytes);
         log!("collection_bytes bytes {}", collection_bytes);
 
-        let storage_size = self.storage_usage_settings.min_account_stat_like_size 
+        let storage_size = self.storage_usage_settings.min_account_recent_like_size 
             + account_extra_bytes 
-            + post_id_extra_bytes
+            + like_extra_bytes
             + collection_bytes;
 
         log!("account_stats bytes {}", storage_size);
@@ -792,7 +836,7 @@ impl Contract {
 
     fn calc_update_profile_fee(&mut self, account_id: &AccountId, profile: &AccountProfileData) -> u128 {
         let existing_profile = self.accounts_profiles.get(&account_id);
-        let account_extra_bytes = if !existing_profile.is_some() {
+        let account_extra_bytes = if existing_profile.is_none() {
             u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap()
         } else {
             0u64
@@ -1108,7 +1152,7 @@ impl Contract {
         self.measure_message_likes_storage_usage();
         self.measure_account_friends_storage_usage();
         self.measure_account_profile_storage_usage();
-        self.measure_account_likes_stat_storage_usage();
+        self.measure_account_recent_likes_storage_usage();
     }
 
     fn measure_message_storage_usage(&mut self) {
@@ -1203,7 +1247,7 @@ impl Contract {
         }
     }
 
-    fn measure_account_likes_stat_storage_usage(&mut self) {
+    fn measure_account_recent_likes_storage_usage(&mut self) {
         let account_id = AccountId::new_unchecked("a".repeat(MIN_ACCOUNT_ID_LEN));
 
         let initial_storage_usage = env::storage_usage();
@@ -1214,15 +1258,14 @@ impl Contract {
         );
         let after_first_account_like_storage_usage = env::storage_usage();
 
-        let msg_id = MessageId { post_id: String::from("a".repeat(MIN_POST_ID_LEN)), msg_idx: 1 };
         self.add_like_to_account_likes_stat(
             account_id.clone(), 
-            AccountLike::MessageLike { msg_id }
+            AccountLike::PostLike { post_id: String::from("b".repeat(MIN_POST_ID_LEN)) }
         );
         let after_second_account_like_storage_usage = env::storage_usage();
 
-        self.storage_usage_settings.min_account_stat_like_size = after_second_account_like_storage_usage - after_first_account_like_storage_usage;
-        self.storage_usage_settings.account_stat_likes_collection_size = after_first_account_like_storage_usage - initial_storage_usage - self.storage_usage_settings.min_account_stat_like_size;
+        self.storage_usage_settings.min_account_recent_like_size = after_second_account_like_storage_usage - after_first_account_like_storage_usage;
+        self.storage_usage_settings.account_recent_likes_collection_size = after_first_account_like_storage_usage - initial_storage_usage - self.storage_usage_settings.min_account_recent_like_size;
 
         self.remove_account_stat_storage(&account_id);
 
