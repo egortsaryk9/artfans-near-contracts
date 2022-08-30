@@ -1,5 +1,5 @@
 [package]
-name = "artfans-social-network"
+name = "artfans-marketplace"
 version = "1.0.0"
 authors = ["Artfans"]
 edition = "2018"

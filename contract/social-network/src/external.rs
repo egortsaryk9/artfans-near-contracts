@@ -1,7 +1,6 @@
 use near_sdk::{ext_contract};
 use near_sdk::json_types::{U128};
 use crate::Call;
-use crate::CallResult;
 
 pub const TGAS: u64 = 1_000_000_000_000;
 pub const FIXED_FEE: u128 = 1_000_000_000_000_000_000;
@@ -14,5 +13,5 @@ trait FungibleToken {
 
 #[ext_contract(ext_self)]
 trait ExtSelf {
-    fn on_fee_collected(&mut self, call: Call) -> CallResult;
+    fn on_fee_collected(&mut self, call: Call) -> Option<String>;
 }
