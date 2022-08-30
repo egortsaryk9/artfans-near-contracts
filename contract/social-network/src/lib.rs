@@ -430,12 +430,12 @@ impl Contract {
         }
     }
     
-    pub fn get_account_last_likes(&self, account_id: AccountId, from_index: u8, limit: u8) -> Vec<(PostId, Option<U64>)> {
+    pub fn get_account_last_likes(&self, account_id: AccountId, from_index: U64, limit: U64) -> Vec<(PostId, Option<U64>)> {
         if let Some(accounts_stats) = self.accounts_stats.get(&account_id) {
             accounts_stats.recent_likes
                 .into_iter()
-                .skip(usize::from(from_index))
-                .take(usize::from(limit))
+                .skip(usize::try_from(u64::from(from_index)).ok().unwrap())
+                .take(usize::try_from(u64::from(limit)).ok().unwrap())
                 .map(|item| {
                     match item {
                         AccountLike::PostLike { post_id } => {
@@ -495,28 +495,12 @@ impl Contract {
     // Assert incoming call
 
     fn assert_add_message_to_post_call(&self, post_id: &PostId, text: &String) {
-        if text.trim().is_empty() {
-            env::panic_str("'text' is empty or whitespace");
-        };
-        
-        // TODO: Add validation for text limit length
-        if text.len() < MIN_POST_MESSAGE_LEN {
-            env::panic_str("'text' length is too small");
-        };
-
+        self.assert_text(text);
         self.assert_post_id(post_id);
     }
 
     fn assert_add_message_to_message_call(&self, parent_msg_id: &MessageID, text: &String) {
-        if text.trim().is_empty() {
-            env::panic_str("'text' is empty or whitespace");
-        };
-
-        // TODO: Add validation for text limit length
-        if text.len() < MIN_POST_MESSAGE_LEN {
-            env::panic_str("'text' length is too small");
-        };
-
+        self.assert_text(text);
         self.assert_message_id(parent_msg_id);
 
         let post_id = &parent_msg_id.post_id;
@@ -561,7 +545,8 @@ impl Contract {
         let account_id = env::signer_account_id();
         
         self.assert_message_id(msg_id);
-        // TODO: Add validation for message existence
+        self.assert_message_existence(msg_id);
+
         if let Some(post_message_likes) = self.posts_messages_likes.get(&msg_id.into()) {
             if post_message_likes.contains(&account_id) {
                 env::panic_str("Message is liked already");
@@ -573,7 +558,8 @@ impl Contract {
         let account_id = env::signer_account_id();
         
         self.assert_message_id(msg_id);
-        // TODO: Add validation for message existence
+        self.assert_message_existence(msg_id);
+
         if let Some(post_message_likes) = self.posts_messages_likes.get(&msg_id.into()) {
             if !post_message_likes.contains(&account_id) {
                 env::panic_str("Message is not liked");
@@ -611,6 +597,28 @@ impl Contract {
         if post_id.len() < MIN_POST_ID_LEN {
             env::panic_str("'post_id' length is too small");
         }
+    }
+
+    fn assert_text(&self, text: &String) {
+        if text.trim().is_empty() {
+            env::panic_str("'text' is empty or whitespace");
+        };
+
+        // TODO: Add validation for text limit length
+        if text.len() < MIN_POST_MESSAGE_LEN {
+            env::panic_str("'text' length is too small");
+        };
+    }
+
+    fn assert_message_existence(&self, msg_id: &MessageID) {
+        if let Some(post_messages) = self.posts_messages.get(&msg_id.post_id) {
+            if post_messages.get(u64::from(msg_id.msg_idx)).is_none() {
+                env::panic_str("Message does not exist");
+            };
+
+        } else {
+            env::panic_str("Message does not exist");
+        };
     }
 
     fn assert_message_id(&self, msg_id: &MessageID) {
@@ -759,18 +767,17 @@ impl Contract {
                 let like_to_delete = account_stats.recent_likes.get(0).expect("Old like is not found");
                 match like_to_delete {
                     AccountLike::PostLike { post_id: post_id_to_delete } => {
-                        if post_id_to_delete.len() > post_id.len() {
-                            u64::try_from(post_id_to_delete.len() - post_id.len()).unwrap() + msg_idx_bytes
-                        } else {
+                        if post_id.len() > post_id_to_delete.len() {
                             u64::try_from(post_id.len() - post_id_to_delete.len()).unwrap() + msg_idx_bytes
+                        } else {
+                            0u64 + msg_idx_bytes
                         }
                     },
                     AccountLike::MessageLike { msg_id: msg_id_to_delete } => {
-                        if msg_id_to_delete.post_id.len() > post_id.len() {
-                            u64::try_from(msg_id_to_delete.post_id.len() - post_id.len()).unwrap()
+                        if post_id.len() > msg_id_to_delete.post_id.len() {
+                            u64::try_from(post_id.len() - msg_id_to_delete.post_id.len()).unwrap()
                         } else {
-                            u64::try_from(post_id.len() - msg_id_to_delete
-                            .post_id.len()).unwrap()
+                            0u64
                         }
                     }
                 }
@@ -790,11 +797,27 @@ impl Contract {
             0u64
         };
 
+        let min_account_recent_like_size = if existing_account_stats.is_some() {
+            let account_stats = existing_account_stats.as_ref().unwrap();
+            let recent_likes_len = u64::try_from(account_stats.recent_likes.len()).unwrap();
+            let recent_likes_limit = u64::try_from(self.custom_settings.account_recent_likes_limit).unwrap();
+
+            if recent_likes_len < recent_likes_limit {
+                self.storage_usage_settings.min_account_recent_like_size
+            } else {
+                0u64
+            }
+
+        } else {
+            self.storage_usage_settings.min_account_recent_like_size
+        };
+
         log!("account_extra_bytes bytes {}", account_extra_bytes);
         log!("like_extra_bytes bytes {}", like_extra_bytes);
         log!("collection_bytes bytes {}", collection_bytes);
+        log!("min_account_recent_like_size bytes {}", min_account_recent_like_size);
 
-        let storage_size = self.storage_usage_settings.min_account_recent_like_size 
+        let storage_size = min_account_recent_like_size
             + account_extra_bytes 
             + like_extra_bytes
             + collection_bytes;
