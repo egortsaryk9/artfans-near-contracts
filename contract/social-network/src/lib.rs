@@ -854,14 +854,14 @@ impl Contract {
         storage_fee.into()
     }
 
-    fn calc_update_profile_fee(&mut self, account_id: &AccountId, profile: &AccountProfileData) -> u128 {
+    fn calc_update_profile_fee(&mut self, account_id: &AccountId, profile_update: &AccountProfileData) -> u128 {
         let existing_profile = self.accounts_profiles.get(&account_id);
         let account_extra_bytes = if existing_profile.is_none() {
             u64::try_from(account_id.as_str().len() - MIN_ACCOUNT_ID_LEN).unwrap()
         } else {
             0u64
         };
-        let json_metadata_extra_bytes = match &profile.json_metadata {
+        let json_metadata_extra_bytes = match &profile_update.json_metadata {
             Some(metadata) => {
               if let Some(p) = &existing_profile {
                   match u64::try_from(metadata.len()).unwrap().checked_sub(u64::try_from(p.json_metadata.len()).unwrap()) {
@@ -874,20 +874,17 @@ impl Contract {
             },
             None => 0u64
         };
-        let image_extra_bytes = match &profile.image {
+        let image_extra_bytes = match &profile_update.image {
             Some(bytes) => {
-               if let Some(v) = bytes.try_to_vec().ok() {
-                  if let Some(p) = &existing_profile {
-                      match u64::try_from(v.len()).unwrap().checked_sub(p.current_image_len) {
-                          Some(diff) => diff,
-                          None => 0u64
-                      }
-                  } else {
-                      u64::try_from(v.len()).unwrap()
-                  }
-               } else {
-                  0u64
-               }
+                let v : Vec<u8> = bytes.clone().into();
+                if let Some(p) = &existing_profile {
+                    match u64::try_from(v.len()).unwrap().checked_sub(p.current_image_len) {
+                        Some(diff) => diff,
+                        None => 0u64
+                    }
+                } else {
+                    u64::try_from(v.len()).unwrap()
+                }
             },
             None => 0u64
         };
