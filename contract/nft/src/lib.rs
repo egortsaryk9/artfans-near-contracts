@@ -92,6 +92,10 @@ impl Contract {
         token_metadata: TokenMetadata
     ) {
         self.assert_token_metadata_admin();
+        if self.nft_token(token_id.clone()).is_none() {
+            env::panic_str("Token is not minted yet");
+        };
+
         if let Some(token_metadata_by_id) = &mut self.tokens.token_metadata_by_id {
             token_metadata_by_id.insert(&token_id, &token_metadata);
         } else {
@@ -99,6 +103,16 @@ impl Contract {
         };
     }
 
+
+    #[payable]
+    pub fn set_default_token_metadata(
+        &mut self,
+        default_token_metadata: TokenMetadata
+    ) {
+        self.assert_token_metadata_admin();
+        default_token_metadata.assert_valid();
+        self.default_token_metadata.set(&default_token_metadata);
+    }
 
     fn assert_owner(&self) {
         assert_eq!(env::predecessor_account_id(), self.tokens.owner_id,
