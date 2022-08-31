@@ -1,5 +1,5 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{env, near_bindgen, log, Balance, AccountId, Gas, Promise, PanicOnDefault, PromiseResult, StorageUsage, BorshStorageKey};
+use near_sdk::{env, is_promise_success, near_bindgen, log, Balance, AccountId, Gas, Promise, PanicOnDefault, StorageUsage, BorshStorageKey};
 use near_sdk::json_types::{U128, U64, Base64VecU8};
 use near_sdk::collections::{LookupMap, Vector, UnorderedSet, LazyOption};
 use near_sdk::serde::{Deserialize, Serialize};
@@ -12,6 +12,7 @@ pub use crate::external::*;
 
 const MIN_ACCOUNT_ID_LEN : usize = 2;
 const MIN_POST_ID_LEN : usize = 1;
+const MAX_POST_ID_LEN : usize = 100;
 const MIN_POST_MESSAGE_LEN : usize = 1;
 
 #[near_bindgen]
@@ -19,7 +20,7 @@ const MIN_POST_MESSAGE_LEN : usize = 1;
 pub struct Contract {
     owner: AccountId,
     fee_ft: AccountId,
-    custom_settings: CustomSettings,
+    admin_settings: AdminSettings,
     storage_usage_settings: StorageUsageSettings,
     posts_messages: LookupMap<PostId, Vector<Message>>,
     posts_likes: LookupMap<PostId, UnorderedSet<AccountId>>,
@@ -103,8 +104,14 @@ pub struct AccountProfile {
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
 #[serde(crate = "near_sdk::serde")]
-pub struct CustomSettings {
+pub struct AdminSettings {
     account_recent_likes_limit: u8,
+    add_message_extra_fee_percent: u8,
+    like_post_extra_fee_percent: u8,
+    like_message_extra_fee_percent: u8,
+    add_friend_extra_fee_percent: u8,
+    update_profile_extra_fee_percent: u8,
+    account_recent_like_extra_fee_percent: u8
 }
 
 impl PartialEq for AccountLike {
@@ -198,8 +205,14 @@ pub struct AccountProfileData {
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
-pub struct CustomSettingsData {
-    account_recent_likes_limit: Option<u8>
+pub struct AdminSettingsData {
+    account_recent_likes_limit: Option<u8>,
+    add_message_extra_fee_percent: Option<u8>,
+    like_post_extra_fee_percent: Option<u8>,
+    like_message_extra_fee_percent: Option<u8>,
+    add_friend_extra_fee_percent: Option<u8>,
+    update_profile_extra_fee_percent: Option<u8>,
+    account_recent_like_extra_fee_percent: Option<u8>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -218,18 +231,42 @@ pub struct MessageDTO {
 impl Contract {
 
     #[init]
-    pub fn new(owner: AccountId, fee_ft: AccountId, settings: CustomSettingsData) -> Self {
+    pub fn new(owner: AccountId, fee_ft: AccountId, settings: AdminSettingsData) -> Self {
         if env::state_exists() == true {
             env::panic_str("Already initialized");
         }
         let mut this = Self {
             owner,
             fee_ft,
-            custom_settings: CustomSettings {
-              account_recent_likes_limit: match settings.account_recent_likes_limit {
-                Some(account_recent_likes_limit) => account_recent_likes_limit,
-                None => 0
-              },
+            admin_settings: AdminSettings {
+                account_recent_likes_limit: match settings.account_recent_likes_limit {
+                    Some(account_recent_likes_limit) => account_recent_likes_limit,
+                    None => 0
+                },
+                add_message_extra_fee_percent: match settings.add_message_extra_fee_percent {
+                    Some(add_message_extra_fee_percent) => add_message_extra_fee_percent,
+                    None => 0
+                },
+                like_post_extra_fee_percent: match settings.like_post_extra_fee_percent {
+                    Some(like_post_extra_fee_percent) => like_post_extra_fee_percent,
+                    None => 0
+                },
+                like_message_extra_fee_percent: match settings.like_message_extra_fee_percent {
+                    Some(like_message_extra_fee_percent) => like_message_extra_fee_percent,
+                    None => 0
+                },
+                add_friend_extra_fee_percent: match settings.add_friend_extra_fee_percent {
+                    Some(add_friend_extra_fee_percent) => add_friend_extra_fee_percent,
+                    None => 0
+                },
+                update_profile_extra_fee_percent: match settings.update_profile_extra_fee_percent {
+                    Some(update_profile_extra_fee_percent) => update_profile_extra_fee_percent,
+                    None => 0
+                },
+                account_recent_like_extra_fee_percent: match settings.account_recent_like_extra_fee_percent {
+                    Some(account_recent_like_extra_fee_percent) => account_recent_like_extra_fee_percent,
+                    None => 0
+                }
             },
             storage_usage_settings: StorageUsageSettings {
                 min_message_size: 0,
@@ -258,75 +295,95 @@ impl Contract {
     }
 
     pub fn add_message_to_post(&mut self, post_id: PostId, text: String) -> Promise {
-        // log!("storage_byte_cost {}", env::storage_byte_cost());
-        let account_id = env::signer_account_id();
+        let account_id = env::predecessor_account_id();
+        // log!("add_message_to_post: predecessor_account_id is {}", env::predecessor_account_id());
         self.assert_add_message_to_post_call(&post_id, &text);
         let fee = self.calc_add_message_to_post_fee(&account_id, &post_id, &text);
         // log!("add_message_to_post fee {}", fee);
-        self.collect_fee_and_execute_call(fee, Call::AddMessageToPost { post_id, text })
+        self.collect_fee_and_execute_call(fee, account_id, Call::AddMessageToPost { post_id, text })
     }
 
     pub fn add_message_to_message(&mut self, parent_msg_id: MessageID, text: String) -> Promise {
-        // log!("storage_byte_cost {}", env::storage_byte_cost());
-        let account_id = env::signer_account_id();
+        let account_id = env::predecessor_account_id();
         self.assert_add_message_to_message_call(&parent_msg_id, &text);
         let fee = self.calc_add_message_to_message_fee(&account_id, &text);
         // log!("add_message_to_message fee {}", fee);
-        self.collect_fee_and_execute_call(fee, Call::AddMessageToMessage { parent_msg_id, text })
+        self.collect_fee_and_execute_call(fee, account_id, Call::AddMessageToMessage { parent_msg_id, text })
     }
 
     pub fn like_post(&mut self, post_id: PostId) -> Promise {
-        // log!("storage_byte_cost {}", env::storage_byte_cost());
-        let account_id = env::signer_account_id();
-        self.assert_like_post_call(&post_id);
+        let account_id = env::predecessor_account_id();
+        self.assert_like_post_call(&account_id, &post_id);
         let fee = self.calc_like_post_fee(&account_id, &post_id) 
             + self.calc_account_recent_likes_fee(&account_id, &post_id, false);
         // log!("like_post fee {}", fee);
-        self.collect_fee_and_execute_call(fee, Call::LikePost { post_id })
+        self.collect_fee_and_execute_call(fee, account_id, Call::LikePost { post_id })
     }
 
     pub fn unlike_post(&mut self, post_id: PostId) -> Promise {
-        self.assert_unlike_post_call(&post_id);
-        self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikePost { post_id })
+        let account_id = env::predecessor_account_id();
+        self.assert_unlike_post_call(&account_id, &post_id);
+        self.collect_fee_and_execute_call(1, account_id, Call::UnlikePost { post_id })
     }
 
     pub fn like_message(&mut self, msg_id: MessageID) -> Promise {
-        // log!("storage_byte_cost {}", env::storage_byte_cost());
-        let account_id = env::signer_account_id();
-        self.assert_like_message_call(&msg_id);
+        let account_id = env::predecessor_account_id();
+        self.assert_like_message_call(&account_id, &msg_id);
         let fee = self.calc_like_message_fee(&account_id, &msg_id)
             + self.calc_account_recent_likes_fee(&account_id, &msg_id.post_id, true);
         // log!("like_message fee {}", fee);
-        self.collect_fee_and_execute_call(fee, Call::LikeMessage { msg_id })
+        self.collect_fee_and_execute_call(fee, account_id, Call::LikeMessage { msg_id })
     }
 
     pub fn unlike_message(&mut self, msg_id: MessageID) -> Promise {
-        self.assert_unlike_message_call(&msg_id);
-        self.collect_fee_and_execute_call(FIXED_FEE, Call::UnlikeMessage { msg_id })
+        let account_id = env::predecessor_account_id();
+        self.assert_unlike_message_call(&account_id, &msg_id);
+        self.collect_fee_and_execute_call(1, account_id, Call::UnlikeMessage { msg_id })
     }
 
     pub fn add_friend(&mut self, friend_id: AccountId) -> Promise {
-        // log!("storage_byte_cost {}", env::storage_byte_cost());
-        let account_id = env::signer_account_id();
-        self.assert_add_friend_call(&friend_id);
+        let account_id = env::predecessor_account_id();
+        self.assert_add_friend_call(&account_id, &friend_id);
         let fee = self.calc_add_friend_fee(&account_id, &friend_id);
         // log!("add_friend fee {}", fee);
-        self.collect_fee_and_execute_call(fee, Call::AddFriend { friend_id })
+        self.collect_fee_and_execute_call(fee, account_id, Call::AddFriend { friend_id })
     }
 
     pub fn update_profile(&mut self, profile: AccountProfileData) -> Promise {
-        // log!("storage_byte_cost {}", env::storage_byte_cost());
-        let account_id = env::signer_account_id();
+        let account_id = env::predecessor_account_id();
         self.assert_update_profile_call(&profile);
-        let fee = self.calc_update_profile_fee(&account_id, &profile);
+        let update_profile_fee = self.calc_update_profile_fee(&account_id, &profile);
+        let fee: u128 = if update_profile_fee != 0 {
+            update_profile_fee
+        } else {
+            1
+        };
         // log!("update_profile fee {}", fee);
-        self.collect_fee_and_execute_call(fee, Call::UpdateProfile { profile })
+        self.collect_fee_and_execute_call(fee, account_id, Call::UpdateProfile { profile })
     }
 
-    pub fn update_settings(&mut self, settings: CustomSettingsData) {
+    pub fn update_admin_settings(&mut self, settings: AdminSettingsData) {
         self.assert_owner();
         if let Some(account_recent_likes_limit) = settings.account_recent_likes_limit {
-            self.custom_settings.account_recent_likes_limit = account_recent_likes_limit;
+            self.admin_settings.account_recent_likes_limit = account_recent_likes_limit;
+        }
+        if let Some(add_message_extra_fee_percent) = settings.add_message_extra_fee_percent {
+            self.admin_settings.add_message_extra_fee_percent = add_message_extra_fee_percent;
+        }
+        if let Some(like_post_extra_fee_percent) = settings.like_post_extra_fee_percent {
+            self.admin_settings.like_post_extra_fee_percent = like_post_extra_fee_percent;
+        }
+        if let Some(like_message_extra_fee_percent) = settings.like_message_extra_fee_percent {
+            self.admin_settings.like_message_extra_fee_percent = like_message_extra_fee_percent;
+        }
+        if let Some(add_friend_extra_fee_percent) = settings.add_friend_extra_fee_percent {
+            self.admin_settings.add_friend_extra_fee_percent = add_friend_extra_fee_percent;
+        }
+        if let Some(update_profile_extra_fee_percent) = settings.update_profile_extra_fee_percent {
+            self.admin_settings.update_profile_extra_fee_percent = update_profile_extra_fee_percent;
+        }
+        if let Some(account_recent_like_extra_fee_percent) = settings.account_recent_like_extra_fee_percent {
+            self.admin_settings.account_recent_like_extra_fee_percent = account_recent_like_extra_fee_percent;
         }
     }
     
@@ -480,8 +537,8 @@ impl Contract {
         }
     }
 
-    pub fn get_custom_settings(&self) -> CustomSettings {
-        self.custom_settings.clone()
+    pub fn get_admin_settings(&self) -> AdminSettings {
+        self.admin_settings.clone()
     }
 
     pub fn get_storage_settings(&self) -> StorageUsageSettings {
@@ -512,25 +569,21 @@ impl Contract {
         };
     }
 
-    fn assert_like_post_call(&self, post_id: &PostId) {
-        let account_id = env::signer_account_id();
-
+    fn assert_like_post_call(&self, account_id: &AccountId, post_id: &PostId) {
         self.assert_post_id(post_id);
 
         if let Some(post_likes) = self.posts_likes.get(post_id) {
-            if post_likes.contains(&account_id) {
+            if post_likes.contains(account_id) {
                 env::panic_str("Post is liked already");
             };
         };
     }
 
-    fn assert_unlike_post_call(&self, post_id: &PostId) {
-        let account_id = env::signer_account_id();
-
+    fn assert_unlike_post_call(&self, account_id: &AccountId, post_id: &PostId) {
         self.assert_post_id(post_id);
 
         if let Some(post_likes) = self.posts_likes.get(post_id) {
-            if !post_likes.contains(&account_id) {
+            if !post_likes.contains(account_id) {
                 env::panic_str("Post is not liked");
             };
         } else {
@@ -538,27 +591,23 @@ impl Contract {
         };
     }
 
-    fn assert_like_message_call(&self, msg_id: &MessageID) {
-        let account_id = env::signer_account_id();
-        
+    fn assert_like_message_call(&self, account_id: &AccountId, msg_id: &MessageID) {        
         self.assert_message_id(msg_id);
         self.assert_message_existence(msg_id);
 
         if let Some(post_message_likes) = self.posts_messages_likes.get(&msg_id.into()) {
-            if post_message_likes.contains(&account_id) {
+            if post_message_likes.contains(account_id) {
                 env::panic_str("Message is liked already");
             };
         };
     }
 
-    fn assert_unlike_message_call(&self, msg_id: &MessageID) {
-        let account_id = env::signer_account_id();
-        
+    fn assert_unlike_message_call(&self, account_id: &AccountId, msg_id: &MessageID) {        
         self.assert_message_id(msg_id);
         self.assert_message_existence(msg_id);
 
         if let Some(post_message_likes) = self.posts_messages_likes.get(&msg_id.into()) {
-            if !post_message_likes.contains(&account_id) {
+            if !post_message_likes.contains(account_id) {
                 env::panic_str("Message is not liked");
             };
         } else {
@@ -566,10 +615,8 @@ impl Contract {
         };
     }
 
-    fn assert_add_friend_call(&self, friend_id: &AccountId) {
-        let account_id = env::signer_account_id();
-
-        if let Some(account_friends) = self.accounts_friends.get(&account_id) {
+    fn assert_add_friend_call(&self, account_id: &AccountId, friend_id: &AccountId) {
+        if let Some(account_friends) = self.accounts_friends.get(account_id) {
             if account_friends.contains(friend_id) {
                 env::panic_str("Friend is added already");
             };
@@ -593,6 +640,10 @@ impl Contract {
 
         if post_id.len() < MIN_POST_ID_LEN {
             env::panic_str("'post_id' length is too small");
+        }
+
+        if post_id.len() > MAX_POST_ID_LEN {
+            env::panic_str("'post_id' cannot exceed 100 bytes");
         }
     }
 
@@ -652,10 +703,7 @@ impl Contract {
             + text_extra_bytes 
             + collection_bytes;
 
-        // log!("add_message_to_post bytes {}", storage_size);
-
-        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
-        storage_fee.into()
+        self.calc_storage_fee(storage_size, self.admin_settings.add_message_extra_fee_percent)
     }
 
     fn calc_add_message_to_message_fee(&mut self, account_id: &AccountId, text: &String) -> u128 {
@@ -672,10 +720,7 @@ impl Contract {
             + text_extra_bytes 
             + msg_idx_bytes;
 
-        // log!("add_message_to_message bytes {}", storage_size);
-
-        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
-        storage_fee.into()
+        self.calc_storage_fee(storage_size, self.admin_settings.add_message_extra_fee_percent)
     }
 
     fn calc_like_post_fee(&mut self, account_id: &AccountId, post_id: &PostId) -> u128 {
@@ -701,10 +746,7 @@ impl Contract {
             + post_id_extra_bytes
             + collection_bytes;
 
-        // log!("like_post bytes {}", storage_size);
-
-        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
-        storage_fee.into()
+        self.calc_storage_fee(storage_size, self.admin_settings.like_post_extra_fee_percent)
     }
 
     fn calc_like_message_fee(&mut self, account_id: &AccountId, msg_id: &MessageID) -> u128 {
@@ -730,15 +772,12 @@ impl Contract {
             + post_id_extra_bytes
             + collection_bytes;
 
-        // log!("like_message bytes {}", storage_size);
-
-        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
-        storage_fee.into()
+        self.calc_storage_fee(storage_size, self.admin_settings.like_message_extra_fee_percent)
     }
 
 
     fn calc_account_recent_likes_fee(&mut self, account_id: &AccountId, post_id: &PostId, is_msg: bool) -> u128 {
-        if self.custom_settings.account_recent_likes_limit == 0 {
+        if self.admin_settings.account_recent_likes_limit == 0 {
             return 0
         }
         
@@ -758,7 +797,7 @@ impl Contract {
         let like_extra_bytes = if existing_account_stats.is_some() {
             let account_stats = existing_account_stats.as_ref().unwrap();
             let recent_likes_len = u64::try_from(account_stats.recent_likes.len()).unwrap();
-            let recent_likes_limit = u64::try_from(self.custom_settings.account_recent_likes_limit).unwrap();
+            let recent_likes_limit = u64::try_from(self.admin_settings.account_recent_likes_limit).unwrap();
             
             if recent_likes_len == recent_likes_limit {
                 let like_to_delete = account_stats.recent_likes.get(0).expect("Old like is not found");
@@ -797,7 +836,7 @@ impl Contract {
         let min_account_recent_like_size = if existing_account_stats.is_some() {
             let account_stats = existing_account_stats.as_ref().unwrap();
             let recent_likes_len = u64::try_from(account_stats.recent_likes.len()).unwrap();
-            let recent_likes_limit = u64::try_from(self.custom_settings.account_recent_likes_limit).unwrap();
+            let recent_likes_limit = u64::try_from(self.admin_settings.account_recent_likes_limit).unwrap();
 
             if recent_likes_len < recent_likes_limit {
                 self.storage_usage_settings.min_account_recent_like_size
@@ -819,10 +858,7 @@ impl Contract {
             + like_extra_bytes
             + collection_bytes;
 
-        // log!("account_stats bytes {}", storage_size);
-
-        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
-        storage_fee.into()
+        self.calc_storage_fee(storage_size, self.admin_settings.account_recent_like_extra_fee_percent)
     }
 
     fn calc_add_friend_fee(&mut self, account_id: &AccountId, friend_id: &AccountId) -> u128 {
@@ -848,10 +884,7 @@ impl Contract {
             + (friend_id_extra_bytes * 2) // UnorderedSet stores additional key in its 'elements: Vector<T>'
             + collection_bytes;
 
-        // log!("add_friend bytes {}", storage_size);
-
-        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
-        storage_fee.into()
+        self.calc_storage_fee(storage_size, self.admin_settings.add_friend_extra_fee_percent)
     }
 
     fn calc_update_profile_fee(&mut self, account_id: &AccountId, profile_update: &AccountProfileData) -> u128 {
@@ -905,10 +938,23 @@ impl Contract {
             + json_metadata_extra_bytes
             + image_extra_bytes;
 
-        // log!("update_profile bytes {}", storage_size);
+        self.calc_storage_fee(storage_size, self.admin_settings.update_profile_extra_fee_percent)
+    }
 
-        let storage_fee = Balance::from(storage_size) * env::storage_byte_cost();
-        storage_fee.into()
+    fn calc_storage_fee(&self, storage_size: StorageUsage, call_extra_fee_percent: u8) -> u128 {
+        let near_fee = Balance::from(storage_size) * env::storage_byte_cost();
+        let activity_ft_fee = near_fee.saturating_mul(ACTIVITY_FT_EXCHANGE_RATE);
+        // log!("storage_size {}", storage_size);
+        // log!("activity_ft_fee {}", activity_ft_fee);
+        let fee: u128 = if call_extra_fee_percent == 0 {
+            activity_ft_fee
+        } else {
+            let extra_fee = activity_ft_fee.saturating_mul(call_extra_fee_percent.into()).saturating_div(100u128);
+            // log!("extra_fee {}", extra_fee);
+            activity_ft_fee + extra_fee
+        };
+        // log!("fee {}", fee);
+        fee
     }
     
     // Execute call logic
@@ -1017,7 +1063,7 @@ impl Contract {
             self.add_account_stat_storage(&account_id)
         });
 
-        let account_recent_likes_limit = usize::from(self.custom_settings.account_recent_likes_limit);
+        let account_recent_likes_limit = usize::from(self.admin_settings.account_recent_likes_limit);
 
         let updated_account_stats = if account_stats.recent_likes.len() > 0 && account_recent_likes_limit == 0 {
             account_stats.recent_likes.clear();
@@ -1349,73 +1395,66 @@ impl Contract {
     }
 
 
-    fn collect_fee_and_execute_call(&mut self, fee: u128, call: Call) -> Promise {
+    fn collect_fee_and_execute_call(&mut self, fee: u128, caller_id: AccountId, call: Call) -> Promise {
         ext_ft::ext(self.fee_ft.clone())
             .with_static_gas(Gas(5*TGAS))
             .ft_collect_fee(U128::from(fee))
                 .then(
                     ext_self::ext(env::current_account_id())
                     .with_static_gas(Gas(5*TGAS))
-                    .on_fee_collected(call)
+                    .on_fee_collected(caller_id, call)
                 )
     }
 
 
     #[private]
-    pub fn on_fee_collected(&mut self, call: Call) -> Option<String> {
+    pub fn on_fee_collected(&mut self, caller_id: AccountId, call: Call) -> Option<String> {
 
-        if env::promise_results_count() != 1 {
-            env::panic_str("Unexpected promise results count");
-        }
-
-        let account_id = env::signer_account_id();
-
-        match env::promise_result(0) {
-            PromiseResult::Successful(_) => {
-                match call {
-                    Call::AddMessageToPost { post_id, text } => {
-                        let msg_id = self.execute_add_message_to_post_call(account_id, post_id, text);
-                        serde_json::to_string(&msg_id).ok()
-                    },
-                    Call::AddMessageToMessage { parent_msg_id, text } => {
-                        let msg_id = self.execute_add_message_to_message_call(account_id, parent_msg_id.into(), text);
-                        serde_json::to_string(&msg_id).ok()
-                    },
-                    Call::LikePost { post_id } => {
-                        let like = self.execute_like_post_call(account_id.clone(), post_id);
-                        self.add_like_to_account_likes_stat(account_id, like);
-                        None
-                    },
-                    Call::UnlikePost { post_id } => {
-                        let like = self.execute_unlike_post_call(account_id.clone(), post_id);
-                        self.remove_like_from_account_likes_stat(account_id, like);
-                        None
-                    },
-                    Call::LikeMessage { msg_id } => {
-                        let like = self.execute_like_message_call(account_id.clone(), msg_id.into());
-                        self.add_like_to_account_likes_stat(account_id, like);
-                        None
-                    },
-                    Call::UnlikeMessage { msg_id } => {
-                        let like = self.execute_unlike_message_call(account_id.clone(), msg_id.into());
-                        self.remove_like_from_account_likes_stat(account_id, like);
-                        None
-                    },
-                    Call::AddFriend { friend_id } => {
-                        self.execute_add_friend_call(account_id, friend_id);
-                        None
-                    },
-                    Call::UpdateProfile { profile } => {
-                        let image: Option<Vec<u8>> = match profile.image {
-                            Some(vec) => Some(vec.into()),
-                            None => None
-                        };
-                        self.execute_update_profile_call(account_id, profile.json_metadata, image);
-                        None
-                    },
-                }
-            },
-            _ => env::panic_str("Fee was not charged"),
+        if is_promise_success() {
+            match call {
+                Call::AddMessageToPost { post_id, text } => {
+                    let msg_id = self.execute_add_message_to_post_call(caller_id, post_id, text);
+                    serde_json::to_string(&msg_id).ok()
+                },
+                Call::AddMessageToMessage { parent_msg_id, text } => {
+                    let msg_id = self.execute_add_message_to_message_call(caller_id, parent_msg_id.into(), text);
+                    serde_json::to_string(&msg_id).ok()
+                },
+                Call::LikePost { post_id } => {
+                    let like = self.execute_like_post_call(caller_id.clone(), post_id);
+                    self.add_like_to_account_likes_stat(caller_id, like);
+                    None
+                },
+                Call::UnlikePost { post_id } => {
+                    let like = self.execute_unlike_post_call(caller_id.clone(), post_id);
+                    self.remove_like_from_account_likes_stat(caller_id, like);
+                    None
+                },
+                Call::LikeMessage { msg_id } => {
+                    let like = self.execute_like_message_call(caller_id.clone(), msg_id.into());
+                    self.add_like_to_account_likes_stat(caller_id, like);
+                    None
+                },
+                Call::UnlikeMessage { msg_id } => {
+                    let like = self.execute_unlike_message_call(caller_id.clone(), msg_id.into());
+                    self.remove_like_from_account_likes_stat(caller_id, like);
+                    None
+                },
+                Call::AddFriend { friend_id } => {
+                    self.execute_add_friend_call(caller_id, friend_id);
+                    None
+                },
+                Call::UpdateProfile { profile } => {
+                    let image: Option<Vec<u8>> = match profile.image {
+                        Some(vec) => Some(vec.into()),
+                        None => None
+                    };
+                    self.execute_update_profile_call(caller_id, profile.json_metadata, image);
+                    None
+                },
+            }
+        } else {
+            env::panic_str("Fee was not charged")
         }
     }
 
