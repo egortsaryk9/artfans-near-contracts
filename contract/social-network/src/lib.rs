@@ -99,7 +99,8 @@ pub enum AccountLike {
 pub struct AccountProfile {
     json_metadata: String,
     image: LazyOption<Vec<u8>>,
-    current_image_len: u64
+    current_image_len: u64,
+    image_url: String
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Copy, Clone)]
@@ -200,7 +201,8 @@ impl From<&MessageId> for MessageID {
 #[serde(crate = "near_sdk::serde")]
 pub struct AccountProfileData {
     json_metadata: Option<String>,
-    image: Option<Base64VecU8>
+    image: Option<Base64VecU8>,
+    image_url: Option<String>
 }
 
 #[derive(Serialize, Deserialize)]
@@ -530,7 +532,8 @@ impl Contract {
               image: match account_profile.image.get() {
                   Some(vec) => Some(Base64VecU8::from(vec)),
                   None => None
-              }
+              },
+              image_url: Some(account_profile.image_url)
             })
         } else {
             None
@@ -922,6 +925,20 @@ impl Contract {
             None => 0u64
         };
 
+        let image_url_extra_bytes = match &profile_update.image_url {
+            Some(image_url) => {
+              if let Some(p) = &existing_profile {
+                  match u64::try_from(image_url.len()).unwrap().checked_sub(u64::try_from(p.image_url.len()).unwrap()) {
+                      Some(diff) => diff,
+                      None => 0u64
+                  }
+              } else {
+                  u64::try_from(image_url.len()).unwrap()
+              }
+            },
+            None => 0u64
+        };
+
         let min_account_profile_size = if existing_profile.is_none() {
             self.storage_usage_settings.min_account_profile_size 
         } else {
@@ -930,13 +947,15 @@ impl Contract {
 
         // log!("account_extra_bytes bytes {}", account_extra_bytes);
         // log!("json_metadata_extra_bytes bytes {}", json_metadata_extra_bytes);
+        // log!("image_url_extra_bytes bytes {}", image_url_extra_bytes);
         // log!("image_extra_bytes bytes {}", image_extra_bytes);
         // log!("min_account_profile_size bytes {}", min_account_profile_size);
 
         let storage_size = min_account_profile_size
             + account_extra_bytes 
             + json_metadata_extra_bytes
-            + image_extra_bytes;
+            + image_extra_bytes
+            + image_url_extra_bytes;
 
         self.calc_storage_fee(storage_size, self.admin_settings.update_profile_extra_fee_percent)
     }
@@ -1041,7 +1060,7 @@ impl Contract {
         self.accounts_friends.insert(&account_id, &account_friends);
     }
 
-    fn execute_update_profile_call(&mut self, account_id: AccountId, json_metadata: Option<String>, image: Option<Vec<u8>>) {
+    fn execute_update_profile_call(&mut self, account_id: AccountId, json_metadata: Option<String>, image: Option<Vec<u8>>, image_url: Option<String>) {
         let mut account_profile = self.accounts_profiles.get(&account_id).unwrap_or_else(|| {
             self.add_account_profile_storage(&account_id)
         });
@@ -1053,6 +1072,10 @@ impl Contract {
         if let Some(bytes) = image {
             account_profile.image.set(&bytes);
             account_profile.current_image_len = u64::try_from(bytes.len()).unwrap();
+        };
+
+        if let Some(url) = image_url {
+            account_profile.image_url = url;
         };
 
         self.accounts_profiles.insert(&account_id, &account_profile);
@@ -1192,14 +1215,15 @@ impl Contract {
 
     fn add_account_profile_storage(&mut self, account_id: &AccountId) -> AccountProfile {
         let account_profile = AccountProfile {
-            json_metadata: "".to_string(),
+            json_metadata: String::from(""),
             image: LazyOption::new(
                 StorageKeys::AccountProfileImage { 
                     account_id: env::sha256(account_id.as_bytes()),
                 },
                 None
             ),
-            current_image_len: 0
+            current_image_len: 0,
+            image_url: String::from("")
         };
         
         self.accounts_profiles.insert(account_id, &account_profile);
@@ -1380,7 +1404,8 @@ impl Contract {
         self.execute_update_profile_call(
             account_id.clone(),
             Some(String::from("")), 
-            Some(Vec::new())
+            Some(Vec::new()),
+            Some(String::from(""))
         );
         let after_profile_update_storage_usage = env::storage_usage();
 
@@ -1449,7 +1474,7 @@ impl Contract {
                         Some(vec) => Some(vec.into()),
                         None => None
                     };
-                    self.execute_update_profile_call(caller_id, profile.json_metadata, image);
+                    self.execute_update_profile_call(caller_id, profile.json_metadata, image, profile.image_url);
                     None
                 },
             }
