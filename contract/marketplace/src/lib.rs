@@ -124,6 +124,7 @@ impl Contract {
     #[private]
     pub fn on_artfans_nft_purchased(&mut self, buyer_id: AccountId) -> Option<Token> {
         let near_amount = ARTFANS_NFT_PRICE - ARTFANS_NFT_REGISTRATION_FEE;
+        
         if is_promise_success() {
             let result = promise_result_as_success().expect("Unexpected promise result");
             let token = near_sdk::serde_json::from_slice::<Token>(&result).ok().expect("Unexpected value result from promise");
