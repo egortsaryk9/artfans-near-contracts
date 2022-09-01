@@ -103,7 +103,7 @@ near view artfans-social-network.test.near get_account_friends '{"account_id": "
 #### Update profile
 
 ```
-near call artfans-social-network.test.near update_profile '{"profile": { "json_metadata": "{ \"name\": \"Alice Lee\", \"age\": 32 }", "image": "/9j/4AAQSkZJRgA" } }' --accountId alice.test.near
+near call artfans-social-network.test.near update_profile '{"profile": { "json_metadata": "{ \"name\": \"Alice Lee\", \"age\": 32 }", "image_url": "http:://some-resource" } }' --accountId alice.test.near
 ```
 
 #### Get profile
@@ -116,7 +116,7 @@ near view artfans-social-network.test.near get_profile '{"account_id": "alice.te
 
 ---
 
-#### Update network settings (admin only)
+#### Update network settings. Operation is restricted to the contract owner
 
 ```
 near call artfans-social-network.test.near update_admin_settings '{"settings": { "account_recent_likes_limit": 5, "add_message_extra_fee_percent": 20, "like_post_extra_fee_percent": 20, "like_message_extra_fee_percent": 20, "add_friend_extra_fee_percent": 20, "update_profile_extra_fee_percent": 20, "account_recent_like_extra_fee_percent": 20 } }' --accountId artfans-admin.test.near

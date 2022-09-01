@@ -4,7 +4,6 @@
 
 ```
 near call artfans_nft.test.near new '{"owner": "artfans-admin.test.near", "contract_metadata": { "spec": "nft-1.0.0", "name": "Artfans NFT collection", "symbol": "ABC" }, "default_token_metadata": { "title": "Very beautiful NFT!" } }' --accountId artfans-admin.test.near
-
 ```
 
 
@@ -53,7 +52,7 @@ near call artfans_nft.test.near remove_token_metadata_admin '{ "account_id": "al
 near call artfans_nft.test.near set_token_metadata '{ "token_id": "token_number_one", "token_metadata": { "title": "Awesome NFT !", "description": "Some description" } }' --accountId artfans-admin.test.near --amount 0.01
 ```
 
-#### Set default token metadata.  Opeartion is restricted to token metadata admins
+#### Set default token metadata. Opeartion is restricted to token metadata admins
 
 ```
 near call artfans_nft.test.near set_default_token_metadata '{ "default_token_metadata": { "title": "New default title", "description": "New default desription" } }' --accountId artfans-admin.test.near --amount 0.01
