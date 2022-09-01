@@ -17,7 +17,7 @@ near call artfans_marketplace.test.near new '{"owner": "artfans_admin.test.near"
 near call artfans_marketplace.test.near buy_activity_ft '' --accountId alice.test.near --amount 1
 ```
 
-#### Mint activity NFT
+#### Mint NFT
 
 ```
 near call artfans_marketplace.test.near mint_artfans_nft '{"token_id": "token_number_one"}' --accountId alice.test.near --amount 3.5
