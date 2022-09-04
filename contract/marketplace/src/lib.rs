@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, is_promise_success, promise_result_as_success, near_bindgen, log, AccountId, Gas, Promise, PanicOnDefault};
 use near_sdk::json_types::{U128};
-use near_contract_standards::non_fungible_token::{TokenId, Token};
+use near_contract_standards::non_fungible_token::{Token};
 
 pub mod external;
 pub use crate::external::*;
@@ -98,22 +98,21 @@ impl Contract {
     }
 
     #[payable]
-    pub fn mint_artfans_nft(&mut self, token_id: TokenId) -> Promise {
-        self.assert_max_token_id(&token_id);
+    pub fn mint_artfans_nft(&mut self) -> Promise {
         let near_amount = env::attached_deposit();
         if near_amount != ARTFANS_NFT_PRICE {
             env::panic_str("Attached deposit must be equal to 3.5 NEAR");
         };
 
         let buyer_id = env::predecessor_account_id();
-        self.purchase_artfans_nft(token_id, buyer_id)
+        self.purchase_artfans_nft(buyer_id)
     }
     
-    fn purchase_artfans_nft(&mut self, token_id: TokenId, buyer_id: AccountId) -> Promise {
+    fn purchase_artfans_nft(&mut self, buyer_id: AccountId) -> Promise {
         ext_nft::ext(self.artfans_nft.clone())
             .with_static_gas(Gas(5*TGAS))
             .with_attached_deposit(ARTFANS_NFT_REGISTRATION_FEE)
-            .nft_mint(token_id, buyer_id.clone(), None)
+            .nft_mint(buyer_id.clone(), None)
                 .then(
                     ext_self::ext(env::current_account_id())
                     .with_static_gas(Gas(5*TGAS))
@@ -134,10 +133,6 @@ impl Contract {
             Promise::new(buyer_id.clone()).transfer(near_amount);
             None
         }
-    }
-
-    fn assert_max_token_id(&self, token_id: &TokenId) {
-        assert!(token_id.len() <= 100, "Custom 'token_id' size cannot exceed 100 bytes");
     }
 
 }
