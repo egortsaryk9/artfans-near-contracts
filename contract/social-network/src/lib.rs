@@ -228,6 +228,13 @@ pub struct MessageDTO {
     likes_count: U64
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct LikesInfoDTO {
+    likes_count: U64,
+    is_liked: bool
+}
+
 
 #[near_bindgen]
 impl Contract {
@@ -469,11 +476,25 @@ impl Contract {
         }
     }
 
+    pub fn get_post_likes_info(&self, post_id: PostId, account_id: AccountId) -> LikesInfoDTO {
+        if let Some(post_likes) = self.posts_likes.get(&post_id) {
+            LikesInfoDTO {
+                likes_count: U64(post_likes.len()),
+                is_liked: post_likes.contains(&account_id)
+            }
+        } else {
+            LikesInfoDTO {
+                likes_count: U64(0),
+                is_liked: false
+            }
+        }
+    }
+
     pub fn get_message_likes(&self, msg_id: MessageID, from_index: U64, limit: U64) -> Vec<AccountId> {
-        if let Some(post_message_like) = self.posts_messages_likes.get(&msg_id.into()) {
+        if let Some(post_message_likes) = self.posts_messages_likes.get(&msg_id.into()) {
             use std::convert::TryFrom;
             if let (Ok(from), Ok(lim)) = (usize::try_from(u64::from(from_index)), usize::try_from(u64::from(limit))) {
-                post_message_like
+                post_message_likes
                     .iter()
                     .skip(from)
                     .take(lim)
@@ -483,6 +504,20 @@ impl Contract {
             }
         } else {
             Vec::new()
+        }
+    }
+
+    pub fn get_message_likes_info(&self, msg_id: MessageID, account_id: AccountId) -> LikesInfoDTO {
+        if let Some(post_message_likes) = self.posts_messages_likes.get(&msg_id.into()) {
+            LikesInfoDTO {
+                likes_count: U64(post_message_likes.len()),
+                is_liked: post_message_likes.contains(&account_id)
+            }
+        } else {
+            LikesInfoDTO {
+                likes_count: U64(0),
+                is_liked: false
+            }
         }
     }
     
