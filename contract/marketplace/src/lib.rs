@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, is_promise_success, promise_result_as_success, near_bindgen, log, AccountId, Gas, Promise, PanicOnDefault};
 use near_sdk::json_types::{U128};
-use near_contract_standards::non_fungible_token::{Token};
+// use near_contract_standards::non_fungible_token::{Token};
 
 pub mod external;
 pub use crate::external::*;
@@ -9,8 +9,8 @@ pub use crate::external::*;
 pub const ACTIVITY_FT_EXCHANGE_RATE: u128 = 100;
 pub const ACTIVITY_FT_REGISTRATION_FEE: u128 = 1_250_000_000_000_000_000_000;
 
-pub const ARTFANS_NFT_PRICE: u128 = 3_500_000_000_000_000_000_000_000;
-pub const ARTFANS_NFT_REGISTRATION_FEE: u128 = 100_000_000_000_000_000_000_000;
+// pub const ARTFANS_NFT_PRICE: u128 = 3_500_000_000_000_000_000_000_000;
+// pub const ARTFANS_NFT_REGISTRATION_FEE: u128 = 100_000_000_000_000_000_000_000;
 
 
 #[near_bindgen]
@@ -19,8 +19,8 @@ pub struct Contract {
     owner: AccountId,
     activity_ft: AccountId,
     activity_ft_beneficiary: AccountId,
-    artfans_nft: AccountId,
-    artfans_nft_beneficiary: AccountId
+    // artfans_nft: AccountId,
+    // artfans_nft_beneficiary: AccountId
 }
 
 #[near_bindgen]
@@ -31,8 +31,8 @@ impl Contract {
         owner: AccountId, 
         activity_ft: AccountId, 
         activity_ft_beneficiary: AccountId, 
-        artfans_nft: AccountId, 
-        artfans_nft_beneficiary: AccountId
+        // artfans_nft: AccountId, 
+        // artfans_nft_beneficiary: AccountId
     ) -> Self {
 
         if env::state_exists() == true {
@@ -43,8 +43,8 @@ impl Contract {
             owner,
             activity_ft,
             activity_ft_beneficiary,
-            artfans_nft,
-            artfans_nft_beneficiary
+            // artfans_nft,
+            // artfans_nft_beneficiary
         }
     }
     
@@ -97,44 +97,44 @@ impl Contract {
         }
     }
 
-    #[payable]
-    pub fn mint_artfans_nft(&mut self) -> Promise {
-        let near_amount = env::attached_deposit();
-        if near_amount != ARTFANS_NFT_PRICE {
-            env::panic_str("Attached deposit must be equal to 3.5 NEAR");
-        };
+    // #[payable]
+    // pub fn mint_artfans_nft(&mut self) -> Promise {
+    //     let near_amount = env::attached_deposit();
+    //     if near_amount != ARTFANS_NFT_PRICE {
+    //         env::panic_str("Attached deposit must be equal to 3.5 NEAR");
+    //     };
 
-        let buyer_id = env::predecessor_account_id();
-        self.purchase_artfans_nft(buyer_id)
-    }
+    //     let buyer_id = env::predecessor_account_id();
+    //     self.purchase_artfans_nft(buyer_id)
+    // }
     
-    fn purchase_artfans_nft(&mut self, buyer_id: AccountId) -> Promise {
-        ext_nft::ext(self.artfans_nft.clone())
-            .with_static_gas(Gas(5*TGAS))
-            .with_attached_deposit(ARTFANS_NFT_REGISTRATION_FEE)
-            .nft_mint(buyer_id.clone(), None)
-                .then(
-                    ext_self::ext(env::current_account_id())
-                    .with_static_gas(Gas(5*TGAS))
-                    .on_artfans_nft_purchased(buyer_id)
-                )
-    }
+    // fn purchase_artfans_nft(&mut self, buyer_id: AccountId) -> Promise {
+    //     ext_nft::ext(self.artfans_nft.clone())
+    //         .with_static_gas(Gas(5*TGAS))
+    //         .with_attached_deposit(ARTFANS_NFT_REGISTRATION_FEE)
+    //         .nft_mint(buyer_id.clone(), None)
+    //             .then(
+    //                 ext_self::ext(env::current_account_id())
+    //                 .with_static_gas(Gas(5*TGAS))
+    //                 .on_artfans_nft_purchased(buyer_id)
+    //             )
+    // }
 
-    #[private]
-    pub fn on_artfans_nft_purchased(&mut self, buyer_id: AccountId) -> Option<Token> {
-        let near_amount = ARTFANS_NFT_PRICE - ARTFANS_NFT_REGISTRATION_FEE;
+    // #[private]
+    // pub fn on_artfans_nft_purchased(&mut self, buyer_id: AccountId) -> Option<Token> {
+    //     let near_amount = ARTFANS_NFT_PRICE - ARTFANS_NFT_REGISTRATION_FEE;
         
-        if is_promise_success() {
-            let result = promise_result_as_success().expect("Unexpected promise result");
-            let token = near_sdk::serde_json::from_slice::<Token>(&result).ok().expect("Unexpected value result from promise");
-            Promise::new(self.artfans_nft_beneficiary.clone()).transfer(near_amount);
-            Some(token)
-        } else {
-            Promise::new(buyer_id.clone()).transfer(near_amount);
-            None
-        }
-    }
-
+    //     if is_promise_success() {
+    //         let result = promise_result_as_success().expect("Unexpected promise result");
+    //         let token = near_sdk::serde_json::from_slice::<Token>(&result).ok().expect("Unexpected value result from promise");
+    //         Promise::new(self.artfans_nft_beneficiary.clone()).transfer(near_amount);
+    //         Some(token)
+    //     } else {
+    //         Promise::new(buyer_id.clone()).transfer(near_amount);
+    //         None
+    //     }
+    // }
+    
 }
 
 

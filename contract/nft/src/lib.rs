@@ -1,8 +1,7 @@
 use near_contract_standards::non_fungible_token::metadata::{
     NFTContractMetadata, NonFungibleTokenMetadataProvider, TokenMetadata,
 };
-use near_contract_standards::non_fungible_token::{Token, TokenId};
-use near_contract_standards::non_fungible_token::NonFungibleToken;
+use near_contract_standards::non_fungible_token::{Token, TokenId, NonFungibleToken};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LazyOption, LookupSet};
 use near_sdk::{
@@ -13,7 +12,10 @@ use near_sdk::json_types::U128;
 use std::collections::HashMap;
 
 
-const MAX_SUPPLY: u128 = 26_000;
+pub const NFT_MAX_SUPPLY: u128 = 26_000;
+pub const NFT_PRICE: u128 = 3_500_000_000_000_000_000_000_000;
+pub const NFT_REGISTRATION_FEE: u128 = 100_000_000_000_000_000_000_000;
+
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -21,8 +23,8 @@ pub struct Contract {
     tokens: NonFungibleToken,
     metadata: LazyOption<NFTContractMetadata>,
     default_token_metadata: LazyOption<TokenMetadata>,
-    minters: LookupSet<AccountId>,
-    token_metadata_admins: LookupSet<AccountId>
+    token_metadata_admins: LookupSet<AccountId>,
+    beneficiary: AccountId
 }
 
 
@@ -34,14 +36,18 @@ enum StorageKey {
     Enumeration,
     Approval,
     DefaultTokenMetadata,
-    Minters,
     TokenMetadataAdmins
 }
 
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new(owner: AccountId, contract_metadata: NFTContractMetadata, default_token_metadata: TokenMetadata) -> Self {
+    pub fn new(
+        owner: AccountId, 
+        contract_metadata: NFTContractMetadata, 
+        default_token_metadata: TokenMetadata,
+        beneficiary: AccountId
+    ) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         
         contract_metadata.assert_valid();
@@ -57,39 +63,49 @@ impl Contract {
             ),
             metadata: LazyOption::new(StorageKey::Metadata, Some(&contract_metadata)),
             default_token_metadata: LazyOption::new(StorageKey::DefaultTokenMetadata, Some(&default_token_metadata)),
-            minters: LookupSet::new(StorageKey::Minters),
-            token_metadata_admins: LookupSet::new(StorageKey::TokenMetadataAdmins)
+            token_metadata_admins: LookupSet::new(StorageKey::TokenMetadataAdmins),
+            beneficiary
         };
-        this.minters.insert(&owner);
         this.token_metadata_admins.insert(&owner);
         this
     }
 
 
     #[payable]
-    pub fn nft_mint(
-        &mut self,
-        receiver_id: AccountId,
-        metadata: Option<TokenMetadata>
-    ) -> Token {
-        self.assert_minter();
+    pub fn nft_buy_mint_approve(&mut self, approve_receiver_id: Option<AccountId>, approve_msg: Option<String>) -> Token {
+        
+        if env::attached_deposit() != NFT_PRICE {
+            env::panic_str("Attached deposit must be equal to 3.5 NEAR");
+        };
+
+        if approve_receiver_id.is_none() && approve_msg.is_some() {
+            env::panic_str("'approve_receiver_id' must be specified for provided 'approve_msg'");
+        };
+
+        let buyer_id = env::predecessor_account_id();
         let total_supply: u128 = self.tokens.owner_by_id.len() as u128;
-        if total_supply < MAX_SUPPLY {
+        if total_supply < NFT_MAX_SUPPLY {
             let token_id: TokenId = format!("{}", total_supply + 1);
-            if let Some(token_metadata) = metadata {
-                self.tokens.internal_mint(token_id, receiver_id, Some(token_metadata))
-            } else {
-                let default_token_metadata = self.default_token_metadata.get().expect("Default Token Metadata is not set");
-                self.tokens.internal_mint(token_id, receiver_id, Some(default_token_metadata))
-            }
+            let token_metadata = self.default_token_metadata.get().expect("Default Token Metadata is not set");
+            let token = self.tokens.internal_mint_with_refund(token_id.clone(), buyer_id, Some(token_metadata), Some(env::current_account_id()));
+            
+            if let Some(account_id) = approve_receiver_id {
+                self.tokens.nft_approve(token_id, account_id, approve_msg);
+            };
+
+            let near_amount = NFT_PRICE - NFT_REGISTRATION_FEE;
+            Promise::new(self.beneficiary.clone()).transfer(near_amount); // send funds to beneficiary
+            token
         } else {
+            let near_amount = NFT_PRICE;
+            Promise::new(buyer_id).transfer(near_amount); // refund
             env::panic_str("Max Supply is reached");
         }
     }
 
 
     #[payable]
-    pub fn set_token_metadata(
+    pub fn nft_set_metadata(
         &mut self,
         token_id: TokenId,
         token_metadata: TokenMetadata
@@ -97,7 +113,7 @@ impl Contract {
         self.assert_token_metadata_admin();
         if self.tokens.owner_by_id.get(&token_id).is_none() {
             env::panic_str("Token id does not exist");
-        }
+        };
         if let Some(token_metadata_by_id) = &mut self.tokens.token_metadata_by_id {
             token_metadata_by_id.insert(&token_id, &token_metadata);
         } else {
@@ -151,26 +167,6 @@ impl Contract {
         assert_eq!(env::predecessor_account_id(), self.tokens.owner_id,
             "This operation is restricted to token owner"
         );
-    }
-
-    fn assert_minter(&self) {
-        assert!(self.minters.contains(&env::predecessor_account_id()),
-            "This operation is restricted to token minters"
-        );
-    }
-
-    pub fn add_minter(&mut self, account_id: AccountId) {
-        self.assert_owner();
-        if !self.minters.insert(&account_id) {
-            env::panic_str("The account is already registered as a minter");
-        }
-    }
-
-    pub fn remove_minter(&mut self, account_id: AccountId) {
-        self.assert_owner();
-        if !self.minters.remove(&account_id) {
-            env::panic_str("The account is not registered as a minter");
-        }
     }
 
     fn assert_token_metadata_admin(&self) {
