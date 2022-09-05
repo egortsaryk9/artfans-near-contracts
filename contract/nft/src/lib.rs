@@ -6,11 +6,14 @@ use near_contract_standards::non_fungible_token::NonFungibleToken;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LazyOption, LookupSet};
 use near_sdk::{
+    assert_one_yocto,
     env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue,
 };
+use near_sdk::json_types::U128;
+use std::collections::HashMap;
 
 
-const MAX_SUPPLY : u128 = 26_000;
+const MAX_SUPPLY: u128 = 26_000;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -66,21 +69,21 @@ impl Contract {
     #[payable]
     pub fn nft_mint(
         &mut self,
-        token_id: TokenId,
         receiver_id: AccountId,
         metadata: Option<TokenMetadata>
     ) -> Token {
         self.assert_minter();
-        let total_supply = u128::from(self.tokens.nft_total_supply());
+        let total_supply: u128 = self.tokens.owner_by_id.len() as u128;
         if total_supply < MAX_SUPPLY {
+            let token_id: TokenId = format!("{}", total_supply + 1);
             if let Some(token_metadata) = metadata {
                 self.tokens.internal_mint(token_id, receiver_id, Some(token_metadata))
             } else {
-                let default_token_metadata = self.default_token_metadata.get().expect("Default token metadata is not defined");
+                let default_token_metadata = self.default_token_metadata.get().expect("Default Token Metadata is not set");
                 self.tokens.internal_mint(token_id, receiver_id, Some(default_token_metadata))
             }
         } else {
-            env::panic_str("Max tokens supply is reached");
+            env::panic_str("Max Supply is reached");
         }
     }
 
@@ -92,14 +95,13 @@ impl Contract {
         token_metadata: TokenMetadata
     ) {
         self.assert_token_metadata_admin();
-        if self.nft_token(token_id.clone()).is_none() {
-            env::panic_str("Token is not minted yet");
-        };
-
+        if self.tokens.owner_by_id.get(&token_id).is_none() {
+            env::panic_str("Token id does not exist");
+        }
         if let Some(token_metadata_by_id) = &mut self.tokens.token_metadata_by_id {
             token_metadata_by_id.insert(&token_id, &token_metadata);
         } else {
-            env::panic_str("Token metadata is not set");
+            env::panic_str("Token Metadata extension is not set");
         };
     }
 
@@ -114,6 +116,37 @@ impl Contract {
         self.default_token_metadata.set(&default_token_metadata);
     }
 
+
+    pub fn nft_payout(
+        &self, 
+        token_id: String,
+        balance: U128, 
+        max_len_payout: u32
+    ) -> HashMap<AccountId, U128> {
+        let owner_id = self.tokens.owner_by_id.get(&token_id).expect("Token id does not exist");
+        let mut result: HashMap<AccountId, U128> = HashMap::new();
+        result.insert(owner_id, balance);
+        result
+    }
+
+
+    #[payable]
+    pub fn nft_transfer_payout(
+        &mut self,
+        receiver_id: AccountId,
+        token_id: String,
+        approval_id: u64,
+        balance: U128,
+        max_len_payout: u32,
+    ) -> HashMap<AccountId, U128> {
+        assert_one_yocto();
+        let owner_id = self.tokens.owner_by_id.get(&token_id).expect("Token id does not exist");
+        self.tokens.nft_transfer(receiver_id, token_id, Some(approval_id), None);
+        let mut result: HashMap<AccountId, U128> = HashMap::new();
+        result.insert(owner_id, balance);
+        result
+    }
+    
     fn assert_owner(&self) {
         assert_eq!(env::predecessor_account_id(), self.tokens.owner_id,
             "This operation is restricted to token owner"
