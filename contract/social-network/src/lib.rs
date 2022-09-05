@@ -404,6 +404,7 @@ impl Contract {
             (from..std::cmp::min(from + lim, post_messages.len()))
                 .map(|idx| {
                     let msg = post_messages.get(idx).unwrap();
+                    let msg_id = MessageId { post_id: post_id.clone(), msg_idx: idx };
                     match msg.payload {
                         MessagePayload::Text { text } => {
                             MessageDTO {
@@ -415,8 +416,8 @@ impl Contract {
                                 account: msg.account,
                                 text: Some(text),
                                 timestamp: U64(msg.timestamp),
-                                likes_count: match self.posts_likes.get(&post_id) {
-                                    Some(post_likes) => U64(post_likes.len()),
+                                likes_count: match self.posts_messages_likes.get(&msg_id) {
+                                    Some(post_message_likes) => U64(post_message_likes.len()),
                                     None => U64(0)
                                 }
                             }
