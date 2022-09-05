@@ -15,7 +15,7 @@ use std::collections::HashMap;
 pub const NFT_MAX_SUPPLY: u128 = 26_000;
 pub const NFT_PRICE: u128 = 3_500_000_000_000_000_000_000_000;
 pub const NFT_REGISTRATION_FEE: u128 = 100_000_000_000_000_000_000_000;
-
+pub const NFT_MINT_BATCH_LIMIT: u8 = 10;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -72,10 +72,16 @@ impl Contract {
 
 
     #[payable]
-    pub fn nft_buy_mint_approve(&mut self, approve_receiver_id: Option<AccountId>, approve_msg: Option<String>) -> Token {
-        
-        if env::attached_deposit() != NFT_PRICE {
-            env::panic_str("Attached deposit must be equal to 3.5 NEAR");
+    pub fn nft_buy_mint_approve(&mut self, quantity: u8, approve_receiver_id: Option<AccountId>, approve_msg: Option<String>) -> Vec<Token> {
+        if quantity > NFT_MINT_BATCH_LIMIT || quantity == 0 {
+            env::panic_str("'quantity' must be in range of 1 and 10 items");
+        };
+
+        let quantity_u128 = u128::from(quantity);
+        let required_near_amount = quantity_u128 * NFT_PRICE; 
+        if env::attached_deposit() != required_near_amount {
+            let err_str = format!("{} items requires exactly {} yoctoNEAR to be attached", quantity, required_near_amount);
+            env::panic_str(&err_str);
         };
 
         if approve_receiver_id.is_none() && approve_msg.is_some() {
@@ -83,28 +89,38 @@ impl Contract {
         };
 
         let buyer_id = env::predecessor_account_id();
-        let total_supply: u128 = self.tokens.owner_by_id.len() as u128;
-        if total_supply < NFT_MAX_SUPPLY {
-            let token_id: TokenId = format!("{}", total_supply + 1);
-            let token_metadata = self.default_token_metadata.get().expect("Default Token Metadata is not set");
-            let token = self.tokens.internal_mint_with_refund(
-                token_id.clone(), 
-                buyer_id, 
-                Some(token_metadata), 
-                None
-            );
-            
-            if let Some(account_id) = approve_receiver_id {
-                self.tokens.nft_approve(token_id, account_id, approve_msg);
-            };
+        let current_supply = self.tokens.owner_by_id.len() as u128;
+        let updated_supply = current_supply + quantity_u128;
 
-            let near_amount = NFT_PRICE - NFT_REGISTRATION_FEE;
+        if updated_supply <= NFT_MAX_SUPPLY {
+
+            let mut result: Vec<Token> = Vec::new();
+            let token_metadata = self.default_token_metadata.get().expect("Default Token Metadata is not set");
+
+            for i in 1..(quantity + 1) {
+                let token_id: TokenId = format!("{}", current_supply + u128::from(i));
+
+                let token = self.tokens.internal_mint_with_refund(
+                    token_id.clone(), 
+                    buyer_id.clone(), 
+                    Some(token_metadata.clone()), 
+                    None
+                );
+
+                if let Some(ref account_id) = approve_receiver_id {
+                    self.tokens.nft_approve(token_id, account_id.clone(), approve_msg.clone());
+                };
+                result.push(token);
+            }
+
+            let near_amount = required_near_amount - (NFT_REGISTRATION_FEE * quantity_u128);
             Promise::new(self.beneficiary.clone()).transfer(near_amount); // send funds to beneficiary
-            token
+            result
+
         } else {
-            let near_amount = NFT_PRICE;
+            let near_amount = required_near_amount;
             Promise::new(buyer_id).transfer(near_amount); // refund
-            env::panic_str("Max Supply is reached");
+            env::panic_str("Max Supply will be exceeded with the provided 'quantity'");
         }
     }
 
