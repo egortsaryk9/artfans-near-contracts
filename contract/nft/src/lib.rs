@@ -87,7 +87,12 @@ impl Contract {
         if total_supply < NFT_MAX_SUPPLY {
             let token_id: TokenId = format!("{}", total_supply + 1);
             let token_metadata = self.default_token_metadata.get().expect("Default Token Metadata is not set");
-            let token = self.tokens.internal_mint_with_refund(token_id.clone(), buyer_id, Some(token_metadata), Some(env::current_account_id()));
+            let token = self.tokens.internal_mint_with_refund(
+                token_id.clone(), 
+                buyer_id, 
+                Some(token_metadata), 
+                None
+            );
             
             if let Some(account_id) = approve_receiver_id {
                 self.tokens.nft_approve(token_id, account_id, approve_msg);
