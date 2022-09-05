@@ -102,8 +102,6 @@ impl Contract {
             Promise::new(self.beneficiary.clone()).transfer(near_amount); // send funds to beneficiary
             token
         } else {
-            let near_amount = NFT_PRICE;
-            Promise::new(buyer_id).transfer(near_amount); // refund
             env::panic_str("Max Supply is reached");
         }
     }
