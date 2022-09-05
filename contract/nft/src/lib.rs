@@ -118,8 +118,6 @@ impl Contract {
             result
 
         } else {
-            let near_amount = required_near_amount;
-            Promise::new(buyer_id).transfer(near_amount); // refund
             env::panic_str("Max Supply will be exceeded with the provided 'quantity'");
         }
     }
