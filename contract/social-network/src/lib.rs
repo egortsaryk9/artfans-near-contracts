@@ -151,7 +151,8 @@ pub enum Call {
     UnlikePost { post_id: PostId },
     LikeMessage { msg_id: MessageID },
     UnlikeMessage { msg_id: MessageID },
-    UpdateProfile { profile: AccountProfileData }
+    UpdateProfile { profile: AccountProfileData },
+    RemoveFriend { friend_id: AccountId },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -356,6 +357,12 @@ impl Contract {
         let fee = self.calc_add_friend_fee(&account_id, &friend_id);
         // log!("add_friend fee {}", fee);
         self.collect_fee_and_execute_call(fee, account_id, Call::AddFriend { friend_id })
+    }
+
+    pub fn remove_friend(&mut self, friend_id: AccountId) -> Promise {
+        let account_id = env::predecessor_account_id();
+        self.assert_remove_friend_call(&account_id, &friend_id);
+        self.collect_fee_and_execute_call(1, account_id, Call::RemoveFriend { friend_id })
     }
 
     pub fn update_profile(&mut self, profile: AccountProfileData) -> Promise {
@@ -658,6 +665,14 @@ impl Contract {
         if let Some(account_friends) = self.accounts_friends.get(account_id) {
             if account_friends.contains(friend_id) {
                 env::panic_str("Friend is added already");
+            };
+        };
+    }
+
+    fn assert_remove_friend_call(&self, account_id: &AccountId, friend_id: &AccountId) {
+        if let Some(account_friends) = self.accounts_friends.get(account_id) {
+            if !account_friends.contains(friend_id) {
+                env::panic_str("Friend is not added");
             };
         };
     }
@@ -1096,6 +1111,12 @@ impl Contract {
         self.accounts_friends.insert(&account_id, &account_friends);
     }
 
+    fn execute_remove_friend_call(&mut self, account_id: AccountId, friend_id: AccountId) {
+        let mut account_friends = self.accounts_friends.get(&account_id).expect("Account friends list is not found");
+        account_friends.remove(&friend_id);
+        self.accounts_friends.insert(&account_id, &account_friends);
+    }
+
     fn execute_update_profile_call(&mut self, account_id: AccountId, json_metadata: Option<String>, image: Option<Vec<u8>>, image_url: Option<String>) {
         let mut account_profile = self.accounts_profiles.get(&account_id).unwrap_or_else(|| {
             self.add_account_profile_storage(&account_id)
@@ -1503,6 +1524,10 @@ impl Contract {
                 },
                 Call::AddFriend { friend_id } => {
                     self.execute_add_friend_call(caller_id, friend_id);
+                    None
+                },
+                Call::RemoveFriend { friend_id } => {
+                    self.execute_remove_friend_call(caller_id, friend_id);
                     None
                 },
                 Call::UpdateProfile { profile } => {
