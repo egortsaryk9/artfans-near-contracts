@@ -92,7 +92,7 @@ impl Contract {
     }
 
     #[payable]
-    pub fn mint(&mut self, account_id: AccountId, amount: U128, registration_fee: Option<U128>) -> U128 {
+    pub fn ft_mint(&mut self, account_id: AccountId, amount: U128, registration_fee: Option<U128>) -> U128 {
         self.assert_minter();
         let amount_to_mint: u128 = if self.token.accounts.contains_key(&account_id) {
             amount.into()
@@ -115,11 +115,19 @@ impl Contract {
     }
 
     #[payable]
-    pub fn burn(&mut self, account_id: AccountId, amount: U128) {
+    pub fn ft_burn(&mut self, account_id: AccountId, amount: U128) {
         self.assert_owner();
         assert_one_yocto();
         self.token.internal_withdraw(&account_id, amount.into());
     }
+
+    #[payable]
+    pub fn set_metadata(&mut self, metadata: FungibleTokenMetadata) {
+        self.assert_owner();
+        metadata.assert_valid();
+        self.metadata.set(&metadata);
+    }
+
 }
 
 pub trait Ownable {
