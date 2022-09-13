@@ -7,7 +7,7 @@ pub const TGAS: u64 = 1_000_000_000_000;
 
 #[ext_contract(ext_ft)]
 trait FungibleToken {
-    fn mint(&mut self, account_id: AccountId, amount: U128, registration_fee: Option<U128>) -> U128;
+    fn ft_mint(&mut self, account_id: AccountId, amount: U128, registration_fee: Option<U128>) -> U128;
 }
 
 // #[ext_contract(ext_nft)]
