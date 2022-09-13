@@ -65,7 +65,7 @@ impl Contract {
         ext_ft::ext(self.activity_ft.clone())
             .with_static_gas(Gas(5*TGAS))
             .with_attached_deposit(ACTIVITY_FT_REGISTRATION_FEE)
-            .mint(buyer_id.clone(), U128::from(ft_amount), Some(U128::from(ft_registration_fee)))
+            .ft_mint(buyer_id.clone(), U128::from(ft_amount), Some(U128::from(ft_registration_fee)))
                 .then(
                     ext_self::ext(env::current_account_id())
                     .with_static_gas(Gas(5*TGAS))

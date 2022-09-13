@@ -26,13 +26,13 @@ near call artfans_ft.test.near remove_minter '{ "account_id": "artfans-marketpla
 #### Mint tokens. Operation is restricted to minters
 
 ```
-near call artfans-ft.test.near mint '{"account_id": "alice.test.near", "amount": "500000000000000000000000000"}' --accountId artfans-admin.test.near --amount 0.00125
+near call artfans-ft.test.near ft_mint '{"account_id": "alice.test.near", "amount": "500000000000000000000000000"}' --accountId artfans-admin.test.near --amount 0.00125
 ```
 
 #### Burn tokens. Operation is restricted to the contract owner
 
 ```
-near call artfans-ft.test.near burn '{"account_id": "alice.test.near", "amount": "200000000000000000000000000"}' --accountId artfans-admin.test.near --depositYocto 1
+near call artfans-ft.test.near ft_burn '{"account_id": "alice.test.near", "amount": "200000000000000000000000000"}' --accountId artfans-admin.test.near --depositYocto 1
 ```
 
 

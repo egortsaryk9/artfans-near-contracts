@@ -52,26 +52,6 @@ near call artfans_ft.test.near add_fee_collector '{"account_id": "artfans_social
 
 ##### 6th step
 
-Deploy NFT contract:
-
-```
-near deploy --wasmFile artfans_nft.wasm --accountId artfans_nft.test.near
-```
-
----
-
-##### 7th step
-
-Initialize NFT contract:
-
-```
-near call artfans_nft.test.near new '{"owner": "artfans_admin.test.near", "contract_metadata": { "spec": "nft-1.0.0", "name": "Artfans NFT collection", "symbol": "AAA" }, "default_token_metadata": { "title": "Default token title" } }' --accountId artfans_admin.test.near
-```
-
----
-
-##### 8th step
-
 Deploy marketplace contract:
 
 ```
@@ -80,35 +60,24 @@ near deploy --wasmFile artfans_marketplace.wasm --accountId artfans_marketplace.
 
 ---
 
-##### 9th step
+##### 7th step
 
 Initialize marketplace contract:
 
 ```
-near call artfans_marketplace.test.near new '{"owner": "artfans_admin.test.near", "activity_ft": "artfans_ft.test.near", "activity_ft_beneficiary": "artfans_social_network.test.near", "artfans_nft": "artfans_nft.test.near", "artfans_nft_beneficiary": "bank.test.near" }' --accountId artfans_admin.test.near
+near call artfans_marketplace.test.near new '{"owner": "artfans_admin.test.near", "activity_ft": "artfans_ft.test.near", "activity_ft_beneficiary": "artfans_social_network.test.near" }' --accountId artfans_admin.test.near
 ```
 
 * *activity_ft_beneficiary* - account, that will receive NEAR tokens when somebody buys 'activity_ft'
-* *artfans_nft_beneficiary* - account, that will receive NEAR tokens, when somebody mints 'artfans_nft'
 
 ---
 
-##### 10th step
+##### 8th step
 
 Register the marketplace contract as activity FT minter:
 
 ```
 near call artfans_ft.test.near add_minter '{"account_id": "artfans_marketplace.test.near" }' --accountId artfans_admin.test.near
-```
-
----
-
-##### 11th step
-
-Register the marketplace contract as NFT minter:
-
-```
-near call artfans_nft.test.near add_minter '{"account_id": "artfans_marketplace.test.near"}' --accountId artfans_admin.test.near
 ```
 
 ---
